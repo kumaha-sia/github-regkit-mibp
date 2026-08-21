@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GitHub Register</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #222831;
+        --bg2: #393e46;
+        --accent: #00adb5;
+        --accent-soft: rgba(0, 173, 181, 0.16);
+        --text: #eeeeee;
+        --muted: rgba(238, 238, 238, 0.55);
+        --glass: rgba(57, 62, 70, 0.42);
+        --glass-strong: rgba(57, 62, 70, 0.62);
+        --glass-border: rgba(238, 238, 238, 0.10);
+        --glass-highlight: rgba(255, 255, 255, 0.12);
+        --danger: #ff6b6b;
+        --ok: #2dd4a7;
+      }
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body, #root { height: 100%; }
+      body {
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'Inter', -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+      }
+      /* ambient glow blobs — liquid glass backdrop */
+      .ambient {
+        position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+      }
+      .ambient::before, .ambient::after {
+        content: ''; position: absolute; border-radius: 50%; filter: blur(90px);
+      }
+      .ambient::before {
+        width: 520px; height: 520px; top: -140px; left: -120px;
+        background: radial-gradient(circle, rgba(0,173,181,0.30), transparent 65%);
+      }
+      .ambient::after {
+        width: 620px; height: 620px; bottom: -200px; right: -160px;
+        background: radial-gradient(circle, rgba(0,173,181,0.16), transparent 65%);
+      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-thumb { background: rgba(238,238,238,0.14); border-radius: 99px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+    </style>
+  </head>
+  <body>
+    <div class="ambient"></div>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
