@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import secrets
 import string
+from typing import Any
 
 _LOWER = string.ascii_lowercase
 _UPPER = string.ascii_uppercase
@@ -42,7 +43,7 @@ def generate_username() -> str:
 def username_from_email(email: str, suffix: str = "") -> str:
     """Derive a GitHub username from the mailbox local-part.
 
-    svo1b0ueb49p@zickmail.com -> 'svo1b0ueb49p'
+    myname123@mail.example.com -> 'myname123'
     Falls back to a random username when the local-part is unusable.
     A short random suffix can be appended when the name is taken.
     """
@@ -75,3 +76,26 @@ def extract_github_code(text: str) -> str | None:
         if m:
             return m.group(1)
     return None
+
+
+def parse_public_profile(random_user: Any, quote: Any) -> dict[str, str]:
+    """Extract public display fields from Random User and ZenQuotes payloads.
+
+    Contact details and generated credentials in the Random User response are
+    intentionally ignored.
+    """
+    try:
+        user = random_user["results"][0]
+        person = user["name"]
+        full_name = " ".join(
+            part.strip()
+            for part in (person.get("title", ""), person["first"], person["last"])
+            if part.strip()
+        )
+        location = str(user["location"]["country"]).strip()
+        bio = str(quote[0]["q"]).strip()
+    except (IndexError, KeyError, TypeError, AttributeError) as exc:
+        raise ValueError(f"invalid public profile payload: {exc}") from exc
+    if not full_name or not location or not bio:
+        raise ValueError("public profile payload has an empty required field")
+    return {"name": full_name, "location": location, "bio": bio}

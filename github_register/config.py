@@ -19,10 +19,22 @@ class Config:
     max_username_tries: int = 6
     otp_timeout_sec: int = 240
     browser_profile_dir: str = ".browser-profile"
+    # fresh browser per account (incognito-like, zero cached state); the
+    # DataDome trust cookie is carried over via .datadome-trust.json so the
+    # signup page keeps loading without hard 403s
+    fresh_profile: bool = True
+    proxy_hard_block_retries: int = 2
+    proxy_rate_limit_retries: int = 2
     # post-signup stages (from user recording)
     create_repo: bool = True          # stage 4: create first repository
     repo_name: str = "hello"          # repo name prefix (username-suffix appended on conflict)
     enable_2fa: bool = True           # stage 5: enable TOTP 2FA and store the secret
+    set_profile_status: bool = True
+    profile_status: str = "On vacation"  # blank disables custom status text
+    complete_profile: bool = True
+    profile_name: str = ""            # blank = Random User
+    profile_bio: str = ""             # blank = ZenQuotes
+    profile_location: str = ""        # blank = Random User country
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":

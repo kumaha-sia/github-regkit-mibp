@@ -12,45 +12,84 @@
     />
     <style>
       :root {
-        --bg: #222831;
-        --bg2: #393e46;
-        --accent: #00adb5;
-        --accent-soft: rgba(0, 173, 181, 0.16);
-        --text: #eeeeee;
-        --muted: rgba(238, 238, 238, 0.55);
-        --glass: rgba(57, 62, 70, 0.42);
-        --glass-strong: rgba(57, 62, 70, 0.62);
-        --glass-border: rgba(238, 238, 238, 0.10);
-        --glass-highlight: rgba(255, 255, 255, 0.12);
-        --danger: #ff6b6b;
-        --ok: #2dd4a7;
+        /* ===== Dark desktop theme — color tokens ===== */
+        /* backgrounds */
+        --bg-primary: #0F1720;
+        --bg-secondary: #131C26;
+        --bg-card: #17212B;
+        --bg-card-hover: #1C2732;
+        --bg-input: #0D141B;
+
+        /* borders */
+        --border: #232F3B;
+        --border-strong: #2D3B49;
+
+        /* text — 3 contrast levels */
+        --text-primary: #E5E7EB;
+        --text-secondary: #A8B3BF;
+        --text-muted: #6B7785;
+
+        /* accent — cyan, used sparingly */
+        --accent: #22D3EE;
+        --accent-rgb: 34, 211, 238;
+        --accent-strong: #06B6D4;
+        --accent-2: #0891B2;
+        --accent-2-rgb: 8, 145, 178;
+        --accent-soft: rgba(34, 211, 238, 0.12);
+
+        /* status */
+        --success: #34D399;
+        --success-rgb: 52, 211, 153;
+        --danger: #EF4444;
+        --danger-rgb: 239, 68, 68;
+        --warning: #F59E0B;
+
+        /* ===== legacy aliases (existing components reference these) ===== */
+        --bg: var(--bg-primary);
+        --bg-raise: var(--bg-card);
+        --text: var(--text-secondary);
+        --ink: var(--text-primary);
+        --muted: var(--text-muted);
+        --ok: var(--success);
+        --ok-rgb: var(--success-rgb);
+        --glass-border: var(--border);
+        --glass-highlight: rgba(255, 255, 255, 0.05);
+        --glass: var(--bg-card);
+        --glass-strong: var(--bg-card-hover);
+        --ring: 0 0 0 3px rgba(34, 211, 238, 0.15);
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       html, body, #root { height: 100%; }
       body {
-        background: var(--bg);
-        color: var(--text);
+        background: var(--bg-primary);
+        color: var(--text-secondary);
         font-family: 'Inter', -apple-system, 'SF Pro Display', 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
         overflow: hidden;
       }
-      /* ambient glow blobs — liquid glass backdrop */
+      @media (max-width: 820px) {
+        body { overflow: auto; }
+        html, body, #root { height: auto; min-height: 100%; }
+      }
+      /* ambient glow — very subtle, keeps depth without washing out */
       .ambient {
         position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
       }
       .ambient::before, .ambient::after {
-        content: ''; position: absolute; border-radius: 50%; filter: blur(90px);
+        content: ''; position: absolute; border-radius: 50%; filter: blur(120px);
       }
       .ambient::before {
-        width: 520px; height: 520px; top: -140px; left: -120px;
-        background: radial-gradient(circle, rgba(0,173,181,0.30), transparent 65%);
+        width: 560px; height: 560px; top: -180px; left: -160px;
+        background: radial-gradient(circle, rgba(34, 211, 238, 0.06), transparent 65%);
       }
       .ambient::after {
-        width: 620px; height: 620px; bottom: -200px; right: -160px;
-        background: radial-gradient(circle, rgba(0,173,181,0.16), transparent 65%);
+        width: 640px; height: 640px; bottom: -240px; right: -200px;
+        background: radial-gradient(circle, rgba(8, 145, 178, 0.05), transparent 65%);
       }
+      ::selection { background: rgba(34, 211, 238, 0.28); }
       ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-thumb { background: rgba(238,238,238,0.14); border-radius: 99px; }
+      ::-webkit-scrollbar-thumb { background: #26323E; border-radius: 99px; }
+      ::-webkit-scrollbar-thumb:hover { background: #33414F; }
       ::-webkit-scrollbar-track { background: transparent; }
     </style>
   </head>

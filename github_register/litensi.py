@@ -53,12 +53,23 @@ class LitensiClient:
             payload = None
         if not resp.ok or not (payload and payload.get("success")):
             reason = payload.get("data") if isinstance(payload, dict) else None
-            hint = " — litensi_site harus format domain (contoh: github.com)" if str(reason) == "BAD SITE" else ""
+            # Litensi error codes (docs: {"success": false, "data": "XXXXXX"})
+            hints = {
+                "BAD SITE": " — litensi_site must be a domain (for example: github.com)",
+                "BAD API": " — check litensi_api_id / litensi_api_key",
+                "BAD API ID": " — litensi_api_id is invalid or inactive",
+                "BAD API KEY": " — litensi_api_key is invalid",
+                "BAD ZONE": " — zone is unavailable for this site (leave blank for automatic selection)",
+                "OUT OF STOCK": " — mailbox stock is empty for this zone/site",
+                "NOT ENOUGH BALANCE": " — Litensi balance is insufficient",
+                "IP NOT ALLOWED": " — server IP is not whitelisted in the Litensi dashboard",
+            }
+            hint = hints.get(str(reason).strip().upper(), "")
             raise LitensiError(
-                f"litensi {path} failed (HTTP {resp.status_code}): "
+                f"litensi {path or 'profile'} failed (HTTP {resp.status_code}): "
                 f"{reason or payload or resp.text[:200]}{hint}"
             )
-        return payload.get("data") or {}
+        return payload.get("data") if payload.get("data") is not None else {}
 
     def profile(self) -> dict:
         """GET /api/profile — username, full_name, balance."""

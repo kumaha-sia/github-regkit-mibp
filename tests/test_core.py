@@ -11,6 +11,7 @@ from github_register.profiles import (
     generate_password,
     generate_username,
     is_valid_username,
+    parse_public_profile,
 )
 
 
@@ -48,6 +49,28 @@ def test_litensi_zone_pick():
     ]
     stock = [z for z in zones if float(z.get("stock") or 0) > 0]
     assert min(stock, key=lambda z: float(z.get("price") or 0))["zone"] == "c"
+
+
+def test_parse_public_profile():
+    random_user = {
+        "results": [{
+            "name": {"title": "Mr", "first": "Caleb", "last": "Harvey"},
+            "location": {"country": "Ireland"},
+            # These must not be included in the resulting profile data.
+            "email": "caleb.harvey@example.com",
+            "login": {"password": "shop"},
+        }]
+    }
+    quote = [{"q": "A public quote."}]
+    assert parse_public_profile(random_user, quote) == {
+        "name": "Mr Caleb Harvey", "location": "Ireland", "bio": "A public quote.",
+    }
+    try:
+        parse_public_profile({}, [])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid profile payload must fail")
 
 
 if __name__ == "__main__":

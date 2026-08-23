@@ -30,7 +30,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from github_register.config import load_config  # noqa: E402
-from github_register.runner import _browser_ctx_options  # noqa: E402
+from github_register import runner  # noqa: E402
+from github_register.runner import _browser_ctx_options, silence_playwright_noise  # noqa: E402
 
 RECORDER_JS = r"""
 (() => {
@@ -198,18 +199,42 @@ def _is_hard_block(page) -> bool:
     return any(m in text for m in HARD_BLOCK_MARKERS)
 
 
-def _warn_if_warp_ip(log=print) -> None:
-    """Warn early when the exit IP belongs to Cloudflare WARP (DataDome hates it)."""
+def _warn_if_warp_ip(cfg=None, log=print) -> None:
+    """Early network diagnostics: proxy info + direct exit IP + WARP warning.
+
+    Uses the SAME sticky URL that the browser will use — not the raw config
+    URL — so the exit-IP check reflects the actual traffic path.
+    """
+    # proxy info first — resolve the sticky URL that _browser_ctx_options uses
+    if cfg is not None and (cfg.proxy or "").strip():
+        from urllib.parse import urlsplit as _us
+
+        from github_register.runner import _ensure_sticky_proxy, _socks_exit_ip
+
+        effective = _ensure_sticky_proxy(cfg.proxy, log=log)
+        p = _us(effective.strip())
+        masked = f"{p.scheme}://{p.hostname}:{p.port or ''}"
+        log(f"[*] browser akan jalan via proxy: {masked}")
+        if (p.scheme or "").lower().startswith("socks"):
+            try:
+                exit_ip = _socks_exit_ip(effective)
+                log(f"[*] proxy exit IP (sticky): {exit_ip}")
+            except Exception as exc:
+                log(f"[!] proxy exit-IP lookup failed: {exc}")
+                log("    The gateway may be rejecting the connection — check proxy credentials / port.")
     try:
         import urllib.request
 
         with urllib.request.urlopen("http://ip-api.com/json/?fields=query,isp", timeout=8) as r:
             data = json.loads(r.read().decode())
         ip, isp = str(data.get("query") or "?"), str(data.get("isp") or "?")
-        log(f"[*] exit IP: {ip} ({isp})")
-        if "cloudflare" in isp.lower() or ip.startswith("104.28."):
-            log("[!] IP kamu Cloudflare WARP — range ini sering diblokir DataDome.")
-            log("    Disarankan matikan WARP (menu bar Cloudflare) untuk rekaman stabil.")
+        if cfg is not None and (cfg.proxy or "").strip():
+            log(f"[*] direct (no-proxy) IP: {ip} ({isp}) — local reference only")
+        else:
+            log(f"[*] exit IP: {ip} ({isp})")
+            if "cloudflare" in isp.lower() or ip.startswith("104.28."):
+                log("[!] Your IP is Cloudflare WARP — this range is often blocked by DataDome.")
+                log("    Disable WARP from the Cloudflare menu bar for more stable recording.")
     except Exception:
         pass  # never block the recorder on network diagnostics
 
@@ -224,29 +249,36 @@ def _open_with_warmup(page, url: str, log=print) -> None:
     page.goto("https://github.com/", wait_until="domcontentloaded", timeout=60_000)
     time.sleep(4)  # let DataDome tags.js execute and set the trust cookie
     if _is_hard_block(page):
-        log("[!] hard block di homepage — IP ditandai DataDome (WARP/VPN?).")
-        log("    Window tetap terbuka: kamu bisa tunggu, reload manual (Cmd+R),")
-        log("    atau matikan WARP lalu jalankan ulang recorder ini.")
+        log("[!] hard block on homepage — IP flagged by DataDome (WARP/VPN?).")
+        log("    The window remains open: wait, reload manually (Cmd+R),")
+        log("    or disable WARP and restart this recorder.")
     else:
-        log(f"[*] navigating ke target: {url}")
+        log(f"[*] navigating to target: {url}")
         page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         time.sleep(3)
         if _is_hard_block(page):
-            log("[!] hard block di halaman target — window tetap terbuka.")
-            log("    Tunggu sebentar lalu reload manual (Cmd+R), atau matikan WARP.")
+            log("[!] hard block on target page — the window remains open.")
+            log("    Wait briefly then reload manually (Cmd+R), or disable WARP.")
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--url", default="https://github.com/signup", help="start URL")
     ap.add_argument("--out", default="recorded_steps", help="output base name")
+    ap.add_argument(
+        "--persistent", action="store_true",
+        help="use persistent profile (.browser-profile) instead of fresh mode",
+    )
     args = ap.parse_args()
 
+    silence_playwright_noise()  # hide TargetClosedError spam
     cfg = load_config(ROOT / "config.json")
-    opts = _browser_ctx_options(cfg)  # persistent profile + geoip + os + humanize
+    if args.persistent:
+        cfg.fresh_profile = False  # recording is usually more stable with a profile
+    opts = _browser_ctx_options(cfg, log=print)  # geoip + os + humanize (+proxy/bridge)
     opts["headless"] = False  # recording is a manual, visible session
 
-    _warn_if_warp_ip()  # tampil sebelum browser dibuka
+    _warn_if_warp_ip(cfg)  # proxy info + IP diagnostics before opening browser
 
     from camoufox.sync_api import Camoufox
 
@@ -262,7 +294,10 @@ def main() -> int:
 
     try:
         with Camoufox(**opts) as browser:
-            context = browser  # persistent context IS the browser object
+            # works for both fresh (Browser) and persistent (BrowserContext)
+            context, page = runner._context_and_page(browser)
+            if getattr(cfg, "fresh_profile", False) and not args.persistent:
+                runner._restore_trust_cookie(context, print)
 
             def on_record(source, payload: str) -> None:
                 try:
@@ -281,13 +316,12 @@ def main() -> int:
             context.expose_binding("__record", on_record)
             context.add_init_script(RECORDER_JS)
 
-            page = context.pages[0] if context.pages else context.new_page()
             page.set_default_timeout(20_000)
             _open_with_warmup(page, args.url)
 
             print(f"[*] recorder armed: {args.url}")
             print(f"[*] live-saving tiap event → {live_path.name}")
-            print("[*] lakukan step manual — tutup window browser atau Ctrl+C untuk selesai\n")
+            print("[*] perform manual steps — close the browser window or press Ctrl+C to finish\n")
 
             last_url = page.url
             while True:
@@ -307,14 +341,15 @@ def main() -> int:
         # browser already closed by the user (TargetClosedError etc.) — that's
         # a NORMAL exit path, not a failure. Recording stays intact.
         if "TargetClosedError" in type(exc).__name__ or "target" in str(exc).lower() or "closed" in str(exc).lower():
-            print(f"\n[*] browser ditutup — rekaman tersimpan", flush=True)
+        print("\n[*] browser closed — recording saved", flush=True)
         else:
             print(f"\n[!] recorder error: {exc}", flush=True)
     finally:
+        runner._stop_proxy_bridge()  # stop local auth bridge if it was started
         if events:
             _dump(events, args.out)
         else:
-            print("[!] tidak ada event terekam")
+        print("[!] no events were recorded")
     return 0
 
 

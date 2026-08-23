@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 
 from github_register.config import load_config
-from github_register.runner import run_job
+from github_register.runner import run_job, silence_playwright_noise
 
 
 def main() -> int:
+    silence_playwright_noise()  # hide TargetClosedError spam on browser exit
     ap = argparse.ArgumentParser(
         prog="github-regkit",
         description="Auto-register GitHub accounts (Camoufox + Litensi mail).",
@@ -25,7 +26,7 @@ def main() -> int:
     cfg_path = Path(args.config)
     if not cfg_path.is_file() and Path("config.example.json").is_file():
         shutil.copy("config.example.json", cfg_path)
-        print(f"[!] created {cfg_path} from config.example.json — fill in your Litensi credentials")
+        print(f"[!] created {cfg_path} from config.example.json — enter your Litensi credentials")
 
     cfg = load_config(cfg_path)
     if args.count is not None:

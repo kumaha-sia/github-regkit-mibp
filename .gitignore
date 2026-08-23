@@ -37,6 +37,7 @@ mail_credentials.txt
 
 # === Browser profile (trust DataDome, data sensitif) ===
 .browser-profile/
+.datadome-trust.json
 
 # === Playwright / rekaman step (bisa berisi nilai pribadi) ===
 .playwright-mcp
@@ -55,6 +56,8 @@ recorded_steps.py
 *.key
 *.p12
 *.pfx
+accounts/
+regkit_codebuddy.*
 
 # === Log & temp ===
 *.log

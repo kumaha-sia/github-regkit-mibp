@@ -21,11 +21,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent
+ACCOUNTS_DIR = ROOT / "accounts"
+RECOVERY_DIR = ACCOUNTS_DIR / "recovery"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from github_register.config import Config, load_config
-from github_register.runner import run_job
+from github_register.litensi import LitensiClient, LitensiError
+from github_register.runner import run_job, silence_playwright_noise
+
+silence_playwright_noise()  # hide TargetClosedError spam when browsers close
 
 ACCESS_PASSWORD = (os.getenv("GITHUB_REGISTER_ACCESS_PASSWORD") or "").strip()
 HOST = (os.getenv("GITHUB_REGISTER_HOST") or "127.0.0.1").strip()
@@ -34,6 +39,18 @@ PORT = int(os.getenv("GITHUB_REGISTER_PORT") or "8093")  # 8092 is used by grok-
 DIST = ROOT / "frontend" / "dist"
 
 SECRET_FIELDS = {"litensi_api_key", "proxy"}
+
+
+def _migrate_legacy_account_files() -> None:
+    """Move pre-accounts/ output files once, preserving existing account data."""
+    ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
+    for legacy in ROOT.glob("github_accounts_*.txt"):
+        target = ACCOUNTS_DIR / legacy.name
+        if not target.exists():
+            legacy.replace(target)
+
+
+_migrate_legacy_account_files()
 
 _sessions: Dict[str, float] = {}
 _SESSION_TTL = 86400 * 7
@@ -141,9 +158,18 @@ class ConfigBody(BaseModel):
     max_username_tries: Optional[int] = None
     otp_timeout_sec: Optional[int] = None
     browser_profile_dir: Optional[str] = None
+    fresh_profile: Optional[bool] = None
+    proxy_hard_block_retries: Optional[int] = None
+    proxy_rate_limit_retries: Optional[int] = None
     create_repo: Optional[bool] = None
     repo_name: Optional[str] = None
     enable_2fa: Optional[bool] = None
+    set_profile_status: Optional[bool] = None
+    profile_status: Optional[str] = None
+    complete_profile: Optional[bool] = None
+    profile_name: Optional[str] = None
+    profile_bio: Optional[str] = None
+    profile_location: Optional[str] = None
 
 
 def _save_config(cfg: Config) -> None:
@@ -167,10 +193,22 @@ def _run_job(count: int) -> None:
             finished_at=None,
             accounts_file="",
         )
+
+    def _on_progress(ok_count: int, fail_count: int) -> None:
+        # called by run_job() after each account attempt (and on start/finish)
+        with _job_lock:
+            _job_state["success"] = int(ok_count)
+            _job_state["fail"] = int(fail_count)
+
     try:
         cfg = load_config(ROOT / "config.json")
         cfg.register_count = count
-        ok, fail, out = run_job(cfg, cancel_cb=controller.should_stop, log=_append_log)
+        ok, fail, out = run_job(
+            cfg,
+            cancel_cb=controller.should_stop,
+            log=_append_log,
+            progress_cb=_on_progress,
+        )
         with _job_lock:
             _job_state.update(success=ok, fail=fail, accounts_file=str(out))
     except Exception as exc:
@@ -235,6 +273,89 @@ async def api_put_config(body: ConfigBody, x_access_key: Optional[str] = Header(
         setattr(cfg, key, value)
     _save_config(cfg)
     return {"ok": True, "config": _public_config()}
+
+
+class LitensiZonesBody(BaseModel):
+    """Optional overrides so the user can test credentials/site BEFORE saving.
+
+    Any field left None (or a masked '*' placeholder for the API key) falls back
+    to the value already stored in config.json.
+    """
+    litensi_api_id: Optional[str] = None
+    litensi_api_key: Optional[str] = None
+    litensi_site: Optional[str] = None
+
+
+@app.post("/api/litensi/zones")
+async def api_litensi_zones(
+    body: LitensiZonesBody, x_access_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """Return the list of Litensi mail zones for the given site.
+
+    Uses overrides from the request body when provided; otherwise falls back to
+    the credentials/site stored in config.json. Masked values (containing '*')
+    coming back from the UI are ignored (treated as "unchanged").
+    """
+    _require_auth(x_access_key)
+    cfg = load_config(ROOT / "config.json")
+
+    def _resolve(override: Optional[str], fallback: str, *, secret: bool = False) -> str:
+        if override is None:
+            return fallback or ""
+        s = override.strip()
+        if not s:
+            return fallback or ""
+        if secret and "*" in s:
+            return fallback or ""
+        return s
+
+    api_id = _resolve(body.litensi_api_id, cfg.litensi_api_id)
+    api_key = _resolve(body.litensi_api_key, cfg.litensi_api_key, secret=True)
+    site = _resolve(body.litensi_site, cfg.litensi_site)
+
+    if not api_id or not api_key:
+        raise HTTPException(status_code=400, detail="Litensi API ID / API Key is not configured")
+    if not site:
+        raise HTTPException(status_code=400, detail="Site domain is not configured")
+
+    try:
+        client = LitensiClient(api_id, api_key, site, zone="")
+        zones = client.prices()
+    except LitensiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:  # network / unexpected
+        raise HTTPException(status_code=502, detail=f"Unable to contact Litensi: {exc}")
+
+    # normalize: keep only known-useful fields, coerce numerics safely
+    def _num(v: Any) -> float:
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    normalized: List[Dict[str, Any]] = []
+    for z in zones:
+        if not isinstance(z, dict):
+            continue
+        normalized.append({
+            "zone": str(z.get("zone") or ""),
+            "price": _num(z.get("price")),
+            "stock": _num(z.get("stock")),
+            # keep original raw fields too for forward-compat display
+            "raw": z,
+        })
+
+    # pick cheapest in-stock zone (same rule as pick_zone) for UI highlight
+    in_stock = [z for z in normalized if z["stock"] > 0]
+    cheapest = min(in_stock, key=lambda z: z["price"])["zone"] if in_stock else ""
+
+    return {
+        "ok": True,
+        "site": site,
+        "zones": normalized,
+        "cheapest": cheapest,
+        "current_zone": cfg.litensi_zone or "",
+    }
 
 
 @app.get("/api/status")
@@ -312,7 +433,7 @@ async def api_logs_snapshot(
 @app.get("/api/accounts")
 async def api_accounts_list(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
     _require_auth(x_access_key)
-    files = sorted(ROOT.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
     items = [
         {"name": f.name, "size": f.stat().st_size, "mtime": f.stat().st_mtime}
         for f in files[:50]
@@ -321,7 +442,7 @@ async def api_accounts_list(x_access_key: Optional[str] = Header(None)) -> Dict[
 
 
 def _parse_accounts_file(path: Path) -> List[Dict[str, str]]:
-    """Parse 'email----password----username[----totp]' lines into dicts."""
+    """Parse account records, including whether a recovery file is available."""
     rows: List[Dict[str, str]] = []
     try:
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -333,20 +454,26 @@ def _parse_accounts_file(path: Path) -> List[Dict[str, str]]:
                 rows.append({
                     "email": parts[0], "password": parts[1],
                     "username": parts[2], "totp": parts[3],
+                    "has_recovery": _recovery_path(parts[0]).is_file(),
                 })
             elif len(parts) == 3:
                 rows.append({
                     "email": parts[0], "password": parts[1],
-                    "username": parts[2], "totp": "",
+                    "username": parts[2], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
                 })
             elif len(parts) == 2:
                 rows.append({
                     "email": parts[0], "password": parts[1],
-                    "username": parts[0].split("@")[0], "totp": "",
+                    "username": parts[0].split("@")[0], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
                 })
     except Exception:
         pass
     return rows
+
+
+def _recovery_path(email: str) -> Path:
+    key = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+    return RECOVERY_DIR / f"{key}.txt"
 
 
 @app.get("/api/totp")
@@ -376,16 +503,35 @@ async def api_accounts_preview(
     _require_auth(x_access_key)
     if name:
         safe = Path(name).name
-        path = ROOT / safe
+        path = ACCOUNTS_DIR / safe
         if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
             raise HTTPException(status_code=404, detail="file not found")
     else:
-        files = sorted(ROOT.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not files:
             return {"ok": True, "rows": [], "total": 0, "name": ""}
         path = files[0]
     rows = _parse_accounts_file(path)
     return {"ok": True, "rows": rows, "total": len(rows), "name": path.name}
+
+
+@app.get("/api/accounts/recovery")
+async def api_accounts_recovery(
+    email: str = Query(..., min_length=3, max_length=320),
+    x_access_key: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Read recovery codes for exactly one account, if they were captured."""
+    _require_auth(x_access_key)
+    path = _recovery_path(email)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="recovery codes are not available for this account")
+    try:
+        codes = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"unable to read recovery codes: {exc}")
+    if not codes:
+        raise HTTPException(status_code=404, detail="recovery code file is empty")
+    return {"ok": True, "email": email, "codes": codes}
 
 
 class DeleteRowBody(BaseModel):
@@ -400,7 +546,7 @@ async def api_accounts_delete_row(
     """Delete one account row (by email) from an accounts file."""
     _require_auth(x_access_key)
     safe = Path(body.name).name
-    path = ROOT / safe
+    path = ACCOUNTS_DIR / safe
     if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -408,6 +554,9 @@ async def api_accounts_delete_row(
     if len(kept) == len(lines):
         raise HTTPException(status_code=404, detail=f"row not found: {body.email}")
     path.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
+    recovery = _recovery_path(body.email)
+    if recovery.is_file():
+        recovery.unlink()
     return {"ok": True, "deleted": len(lines) - len(kept), "remaining": len(kept)}
 
 
@@ -419,7 +568,7 @@ async def api_accounts_delete_file(
     """Delete an entire accounts file."""
     _require_auth(x_access_key)
     safe = Path(name).name
-    path = ROOT / safe
+    path = ACCOUNTS_DIR / safe
     if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
     path.unlink()
@@ -434,11 +583,11 @@ async def api_accounts_download(
     _require_auth(x_access_key)
     if name:
         safe = Path(name).name
-        path = ROOT / safe
+        path = ACCOUNTS_DIR / safe
         if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
             raise HTTPException(status_code=404, detail="file not found")
     else:
-        files = sorted(ROOT.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+        files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
         if not files:
             raise HTTPException(status_code=404, detail="no accounts file")
         path = files[0]

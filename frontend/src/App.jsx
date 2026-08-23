@@ -1,162 +1,203 @@
-import React, { useEffect, useState } from 'react'
-import { api, getToken, setToken } from './api.js'
-import StatusPanel from './components/StatusPanel.jsx'
-import LogViewer from './components/LogViewer.jsx'
-import ConfigPanel from './components/ConfigPanel.jsx'
-import AccountsPanel from './components/AccountsPanel.jsx'
+import React, { useEffect, useState } from "react";
+import {
+  Activity,
+  BookOpenText,
+  Boxes,
+  ExternalLink,
+  Heart,
+  LogOut,
+  Octagon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Settings,
+  ShieldCheck,
+} from "lucide-react";
+import { api, getToken, setToken } from "./api.js";
+import StatusPanel from "./components/StatusPanel.jsx";
+import LogViewer from "./components/LogViewer.jsx";
+import ConfigPanel from "./components/ConfigPanel.jsx";
+import AccountsPanel from "./components/AccountsPanel.jsx";
+import { Badge, Button, Card, Input, Spinner } from "./components/ui.jsx";
 
 const NAV = [
-  { id: 'status', label: 'Status', icon: '◐' },
-  { id: 'log', label: 'Live Log', icon: '≡' },
-  { id: 'config', label: 'Config', icon: '⚙' },
-  { id: 'accounts', label: 'Accounts', icon: '⬇' },
-]
+  { id: "status", label: "Status", icon: Activity },
+  { id: "log", label: "Live Log", icon: BookOpenText },
+  { id: "config", label: "Config", icon: Settings },
+  { id: "accounts", label: "Accounts", icon: Boxes },
+];
 
 export default function App() {
-  const [auth, setAuth] = useState(null)
-  const [tab, setTab] = useState('status')
-  const [password, setPassword] = useState('')
-  const [running, setRunning] = useState(false)
+  const [auth, setAuth] = useState(null);
+  const [tab, setTab] = useState("status");
+  const [password, setPassword] = useState("");
+  const [running, setRunning] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   useEffect(() => {
-    api.get('/api/config').then((d) => setAuth({ needs: d.needs_auth })).catch(() => setAuth({ needs: true }))
-  }, [])
-
-  // running badge in the sidebar
+    api
+      .get("/api/config")
+      .then((d) => setAuth({ needs: d.needs_auth }))
+      .catch(() => setAuth({ needs: true }));
+  }, []);
   useEffect(() => {
-    if (auth?.needs && !getToken()) return
-    const t = setInterval(() => {
-      api.get('/api/status').then((d) => setRunning(!!d.running)).catch(() => {})
-    }, 2500)
-    return () => clearInterval(t)
-  }, [auth])
+    if (auth?.needs && !getToken()) return undefined;
+    const timer = setInterval(
+      () =>
+        api
+          .get("/api/status")
+          .then((d) => setRunning(!!d.running))
+          .catch(() => {}),
+      2500,
+    );
+    return () => clearInterval(timer);
+  }, [auth]);
 
   async function doLogin() {
     try {
-      const d = await api.post('/api/auth', { password })
-      setToken(d.token)
-      setAuth({ needs: d.needs_auth })
-      setPassword('')
-    } catch (e) {
-      alert('Login gagal: ' + e.message)
+      const data = await api.post("/api/auth", { password });
+      setToken(data.token);
+      setAuth({ needs: data.needs_auth });
+      setPassword("");
+    } catch (error) {
+      alert(`Login failed: ${error.message}`);
     }
   }
 
-  if (auth === null) {
+  if (auth === null)
     return (
-      <div style={{ ...styles.center, zIndex: 1 }}>
-        <div style={{ fontSize: 15, color: 'var(--muted)' }}>Loading…</div>
-      </div>
-    )
-  }
-
-  if (auth.needs && !getToken()) {
+      <main className="app-loading">
+        <Spinner />
+        <span>Loading application</span>
+      </main>
+    );
+  if (auth.needs && !getToken())
     return (
-      <div style={{ ...styles.center, zIndex: 1 }} className="fade-in">
-        <div className="glass" style={{ padding: 40, width: 380, textAlign: 'center' }}>
-          <div style={{ fontSize: 40, marginBottom: 6 }}>🐙</div>
-          <h1 style={{ fontSize: 21, fontWeight: 800, marginBottom: 4 }}>GitHub Register</h1>
-          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 24 }}>
-            Camoufox · Litensi · Liquid Glass
-          </p>
-          <input
+      <main className="app-login">
+        <Card className="app-login-card">
+          <div className="app-login-mark">
+            <ShieldCheck size={26} />
+          </div>
+          <h1>GitHub Register</h1>
+          <p>Enter the access password to open the console.</p>
+          <Input
             type="password"
-            className="glass-input"
             placeholder="Access password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && doLogin()}
-            style={{ textAlign: 'center', marginBottom: 14 }}
+            onKeyDown={(e) => e.key === "Enter" && doLogin()}
           />
-          <button className="glass-btn primary" style={{ width: '100%' }} onClick={doLogin}>
-            Masuk
-          </button>
-        </div>
-      </div>
-    )
-  }
+          <Button variant="primary" size="lg" onClick={doLogin}>
+            Sign in
+          </Button>
+        </Card>
+      </main>
+    );
 
+  const ActivePanel = {
+    status: StatusPanel,
+    log: LogViewer,
+    config: ConfigPanel,
+    accounts: AccountsPanel,
+  }[tab];
   return (
-    <div style={styles.shell}>
-      <aside className="glass" style={styles.sidebar}>
-        <div style={styles.brand}>
-          <div style={styles.logo}>🐙</div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 14.5 }}>GitHub Register</div>
-            <div style={{ fontSize: 11, color: 'var(--muted)' }}>Camoufox Engine</div>
+    <div
+      className={sidebarOpen ? "app-shell" : "app-shell app-shell-collapsed"}
+    >
+      <aside
+        className={
+          sidebarOpen ? "app-sidebar" : "app-sidebar app-sidebar-collapsed"
+        }
+      >
+        <div className="app-sidebar-top">
+          <div className="app-brand">
+            <div className="app-brand-icon">
+              <Octagon size={20} />
+            </div>
+            <div className="app-brand-copy">
+              <strong>GitHub Register</strong>
+              <a
+                className="app-brand-link"
+                href="https://github.com/mhiqrambg/github-regkit-mibp"
+                target="_blank"
+                rel="noreferrer"
+              >
+                MIBP DEV
+              </a>
+            </div>
           </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="app-sidebar-toggle"
+            onClick={() => setSidebarOpen((open) => !open)}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+            title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            {sidebarOpen ? (
+              <PanelLeftClose size={17} />
+            ) : (
+              <PanelLeftOpen size={17} />
+            )}
+          </Button>
         </div>
-
-        <nav style={styles.nav}>
-          {NAV.map((n) => (
+        <nav className="app-nav">
+          {NAV.map(({ id, label, icon: Icon }) => (
             <button
-              key={n.id}
-              className={tab === n.id ? 'seg-active' : ''}
-              style={tab === n.id ? { ...styles.navBtn, ...styles.navBtnActive } : styles.navBtn}
-              onClick={() => setTab(n.id)}
+              key={id}
+              className={tab === id ? "app-nav-item active" : "app-nav-item"}
+              onClick={() => setTab(id)}
+              title={label}
             >
-              <span style={{ opacity: 0.85, fontSize: 15 }}>{n.icon}</span>
-              {n.label}
+              <Icon size={17} />
+              <span>{label}</span>
             </button>
           ))}
         </nav>
-
-        <div style={styles.sidebarFoot}>
-          <div className={`badge ${running ? 'ok' : 'muted'}`} style={{ width: '100%', justifyContent: 'center' }}>
+        <div className="app-sidebar-footer">
+          <Badge tone={running ? "success" : "muted"}>
             {running && <span className="pulse-dot" />}
-            {running ? 'Job Running' : 'Idle'}
-          </div>
+            {running ? "Job running" : "Idle"}
+          </Badge>
           {auth.needs && (
-            <button
-              className="glass-btn"
-              style={{ width: '100%', fontSize: 12, padding: '8px 0' }}
-              onClick={() => { setToken(''); window.location.reload() }}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setToken("");
+                window.location.reload();
+              }}
             >
-              Logout
-            </button>
+              <LogOut size={14} /> <span>Sign out</span>
+            </Button>
           )}
+          <a
+            className="app-support"
+            href="https://trakteer.id/mhiqrambg/tip"
+            target="_blank"
+            rel="noreferrer"
+            title="Support on Trakteer"
+          >
+            <Heart size={12} />
+            <span>Support</span>
+          </a>
+          <a
+            className="app-credit"
+            href="https://github.com/mhiqrambg/github-regkit-mibp"
+            target="_blank"
+            rel="noreferrer"
+            title="mhiqrambg/github-regkit-mibp"
+          >
+            <ExternalLink size={12} />
+            <span>mhiqrambg/github-regkit-mibp</span>
+          </a>
         </div>
       </aside>
-
-      <main style={styles.main} key={tab} className="fade-in">
-        {tab === 'status' && <StatusPanel onGotoLogs={() => setTab('log')} onGotoAccounts={() => setTab('accounts')} />}
-        {tab === 'log' && <LogViewer />}
-        {tab === 'config' && <ConfigPanel />}
-        {tab === 'accounts' && <AccountsPanel />}
+      <main className="app-main" key={tab}>
+        <ActivePanel
+          onGotoLogs={() => setTab("log")}
+          onGotoAccounts={() => setTab("accounts")}
+        />
       </main>
     </div>
-  )
-}
-
-const styles = {
-  center: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-  shell: { display: 'flex', height: '100vh', position: 'relative', zIndex: 1 },
-  sidebar: {
-    width: 232, margin: 14, marginRight: 0, padding: 18,
-    display: 'flex', flexDirection: 'column', gap: 18, flexShrink: 0,
-  },
-  brand: { display: 'flex', alignItems: 'center', gap: 12, padding: '4px 6px' },
-  logo: {
-    width: 38, height: 38, borderRadius: 12, fontSize: 20,
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: 'linear-gradient(135deg, rgba(0,173,181,0.30), rgba(0,173,181,0.10))',
-    border: '1px solid rgba(0,173,181,0.35)',
-    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.15)',
-  },
-  nav: { display: 'flex', flexDirection: 'column', gap: 4, flex: 1 },
-  navBtn: {
-    display: 'flex', alignItems: 'center', gap: 11,
-    background: 'transparent', border: 'none', color: 'var(--muted)',
-    fontFamily: 'inherit', fontSize: 13.5, fontWeight: 600,
-    padding: '11px 14px', borderRadius: 12, cursor: 'pointer',
-    transition: 'all 0.18s ease', textAlign: 'left',
-  },
-  navBtnActive: {
-    color: 'var(--text)',
-    background: 'rgba(0,173,181,0.16)',
-    boxShadow: 'inset 0 1px 0 var(--glass-highlight), 0 2px 12px rgba(0,173,181,0.15)',
-    border: '1px solid rgba(0,173,181,0.28)',
-  },
-  sidebarFoot: { display: 'flex', flexDirection: 'column', gap: 10 },
-  main: { flex: 1, padding: 14, overflowY: 'auto', display: 'flex', flexDirection: 'column' },
+  );
 }
