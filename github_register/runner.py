@@ -20,6 +20,7 @@ import requests
 
 from .config import Config
 from .litensi import LitensiClient, LitensiError
+from .tempik import TempikClient, TempikError
 from .profiles import (
     generate_password,
     generate_username,
@@ -670,9 +671,12 @@ def _reject_blocked(page) -> None:
             raise SignupBlocked(f"github risk check: {marker}")
 
 
-def _cancel_order(lit: LitensiClient, order_id: str, log) -> None:
+def _cancel_order(mail, order_id: str, log) -> None:
+    """Cancel a mailbox order. No-op for Tempik (inbox lives until session expires)."""
+    if isinstance(mail, TempikClient):
+        return  # Tempik has no cancel/free lifecycle
     try:
-        lit.set_status(order_id, "CANCELED")
+        mail.set_status(order_id, "CANCELED")
         log(f"[*] litensi order {order_id} canceled")
     except Exception as exc:
         if "CANCEL AFTER" in str(exc):
@@ -1979,7 +1983,7 @@ def _fill_signup_form(page, cfg, email, password, log, stop) -> str:
 
 def _post_form_flow(
     page, context, cfg: Config, email: str, password: str, username: str,
-    lit: LitensiClient, order_id: str, log, stop,
+    mail, order_id: str, log, stop,
 ) -> tuple[str, str, str]:
     """Everything AFTER the signup form was accepted: email verification
     (launch code), auto-login, first repository (stage 4), TOTP 2FA (stage 5).
@@ -1989,7 +1993,7 @@ def _post_form_flow(
     state = _wait_post_submit(page, context, timeout=120, log=log, stop=stop)
     if state == "verify":
         log(f"[*] verification page: {page.url}")
-        code = lit.wait_for_code(
+        code = mail.wait_for_code(
             order_id,
             email=email,
             timeout=cfg.otp_timeout_sec,
@@ -2000,8 +2004,8 @@ def _post_form_flow(
         _fill_launch_code(page, code, log)
         # confirm the activation with Litensi: code was used (setstatus SUCCESS)
         try:
-            delivered = lit.last_order_id or order_id
-            lit.mark_success(delivered)
+            delivered = mail.last_order_id or order_id
+            mail.mark_success(delivered)
             log(f"[*] litensi order {delivered} confirmed SUCCESS")
         except Exception as exc:
             log(f"[i] litensi confirm SUCCESS failed: {exc}")
@@ -2077,7 +2081,7 @@ def _run_signup(
     cfg: Config,
     email: str,
     password: str,
-    lit: LitensiClient,
+    mail,  # LitensiClient or TempikClient
     order_id: str,
     log,
     stop,
@@ -2196,13 +2200,24 @@ def _run_signup(
             # form accepted — continue with the rest of the flow in this same session
             return _post_form_flow(
                 page, context, cfg, email, password, username,
-                lit, order_id, log, stop,
+                mail, order_id, log, stop,
             )
             # non-SignupError exceptions propagate immediately (with-block closes browser)
     raise SignupError(
         f"signup form never completed after {page_reloads} page-reloads x "
         f"{session_reloads + 1} sessions: {last_exc}"
     )
+
+
+def _make_mail_provider(cfg: Config):
+    """Factory: create the appropriate mail client based on config."""
+    provider = getattr(cfg, "email_provider", "litensi") or "litensi"
+    if provider == "tempik":
+        return TempikClient(
+            api_base=getattr(cfg, "tempik_api_base", "https://tempik.webkarya.net/api"),
+            domains=getattr(cfg, "tempik_domains", "webkarya.net"),
+        )
+    return LitensiClient(cfg.litensi_api_id, cfg.litensi_api_key, cfg.litensi_site, cfg.litensi_zone)
 
 
 def register_one(
@@ -2214,9 +2229,10 @@ def register_one(
     if cfg.proxy and getattr(cfg, "rotate_ip_per_account", False):
         _rotate_sticky_proxy()
         log("[*] IP rotated for new account (rotate_ip_per_account=true)")
-    lit = LitensiClient(cfg.litensi_api_id, cfg.litensi_api_key, cfg.litensi_site, cfg.litensi_zone)
-    email, order_id = lit.create_mailbox()
-    log(f"[*] mailbox: {email} (order {order_id})")
+    provider_name = getattr(cfg, "email_provider", "litensi") or "litensi"
+    mail = _make_mail_provider(cfg)
+    email, order_id = mail.create_mailbox()
+    log(f"[*] mailbox: {email} (provider={provider_name}, order {order_id})")
     try:
         password = generate_password()
         hard_left = int(getattr(cfg, "proxy_hard_block_retries", 0) or 0) if cfg.proxy else 0
@@ -2226,7 +2242,7 @@ def register_one(
             _raise_if_cancelled(stop)
             try:
                 username, totp_secret, recovery = _run_signup(
-                    cfg, email, password, lit, order_id, log, stop
+                    cfg, email, password, mail, order_id, log, stop
                 )
                 break
             except SignupError as exc:
@@ -2293,10 +2309,10 @@ def register_one(
         return None
     finally:
         # order already confirmed SUCCESS -> nothing to cancel; else free the mailbox
-        if lit.last_order_id:
+        if mail.last_order_id:
             log("[*] mailbox already confirmed (SUCCESS) — no cancel needed")
         else:
-            _cancel_order(lit, order_id, log)
+            _cancel_order(mail, order_id, log)
 
 
 def run_job(

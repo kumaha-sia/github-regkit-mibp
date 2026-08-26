@@ -1,8 +1,11 @@
 {
+  "email_provider": "litensi",
   "litensi_api_id": "",
   "litensi_api_key": "",
   "litensi_site": "github.com",
   "litensi_zone": "",
+  "tempik_api_base": "https://tempik.webkarya.net/api",
+  "tempik_domains": "webkarya.net",
   "register_count": 1,
   "proxy": "",
   "headless": false,

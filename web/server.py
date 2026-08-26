@@ -192,10 +192,13 @@ class StartBody(BaseModel):
 
 
 class ConfigBody(BaseModel):
+    email_provider: Optional[str] = None
     litensi_api_id: Optional[str] = None
     litensi_api_key: Optional[str] = None
     litensi_site: Optional[str] = None
     litensi_zone: Optional[str] = None
+    tempik_api_base: Optional[str] = None
+    tempik_domains: Optional[str] = None
     register_count: Optional[int] = None
     proxy: Optional[str] = None
     headless: Optional[bool] = None

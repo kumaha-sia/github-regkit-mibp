@@ -14,10 +14,16 @@ SENSITIVE_FIELDS = {"litensi_api_id", "litensi_api_key", "proxy"}
 
 @dataclass
 class Config:
+    # email provider: "litensi" or "tempik"
+    email_provider: str = "litensi"
+    # litensi config
     litensi_api_id: str = ""
     litensi_api_key: str = ""
     litensi_site: str = "github.com"
     litensi_zone: str = ""
+    # tempik config
+    tempik_api_base: str = "https://tempik.webkarya.net/api"
+    tempik_domains: str = "webkarya.net"
     register_count: int = 1
     proxy: str = ""
     headless: bool = False
