@@ -2350,8 +2350,11 @@ def run_job(
                 log(f"[!] litensi error, aborting: {exc}")
                 break
             if line:
+                # encrypt line if encryption is enabled; otherwise plaintext
+                from .crypto import encrypt
+                enc_line = encrypt(line)
                 with out.open("a", encoding="utf-8") as f:
-                    f.write(line + "\n")
+                    f.write(enc_line + "\n")
                 ok += 1
                 log(f"[+] {line.split('----')[0]} saved to {out.name}")
             else:

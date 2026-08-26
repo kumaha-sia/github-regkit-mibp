@@ -28,6 +28,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from github_register.config import Config, load_config, save_config
+from github_register.crypto import encrypt, decrypt, is_enabled as crypto_enabled
 from github_register.litensi import LitensiClient, LitensiError
 from github_register.runner import run_job, silence_playwright_noise
 
@@ -470,11 +471,25 @@ async def api_accounts_list(x_access_key: Optional[str] = Header(None)) -> Dict[
     return {"ok": True, "files": items}
 
 
+def _read_accounts_file(path: Path) -> str:
+    """Read an accounts file, decrypting if encryption is enabled."""
+    raw = path.read_text(encoding="utf-8")
+    if raw.startswith("enc:"):
+        return decrypt(raw)
+    return raw
+
+
+def _write_accounts_file(path: Path, content: str) -> None:
+    """Write an accounts file, encrypting if encryption is enabled."""
+    path.write_text(encrypt(content), encoding="utf-8")
+
+
 def _parse_accounts_file(path: Path) -> List[Dict[str, str]]:
     """Parse account records, including whether a recovery file is available."""
     rows: List[Dict[str, str]] = []
     try:
-        for line in path.read_text(encoding="utf-8").splitlines():
+        text = _read_accounts_file(path)
+        for line in text.splitlines():
             line = line.strip()
             if not line:
                 continue
@@ -630,11 +645,11 @@ async def api_accounts_delete_row(
     path = ACCOUNTS_DIR / safe
     if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
         raise HTTPException(status_code=404, detail="file not found")
-    lines = [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip()]
+    lines = [l for l in _read_accounts_file(path).splitlines() if l.strip()]
     kept = [l for l in lines if not l.strip().lower().startswith(body.email.strip().lower() + "----")]
     if len(kept) == len(lines):
         raise HTTPException(status_code=404, detail=f"row not found: {body.email}")
-    path.write_text(("\n".join(kept) + "\n") if kept else "", encoding="utf-8")
+    _write_accounts_file(path, ("\n".join(kept) + "\n") if kept else "")
     recovery = _recovery_path(body.email)
     if recovery.is_file():
         recovery.unlink()
