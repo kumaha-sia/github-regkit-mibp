@@ -31,6 +31,7 @@ from github_register.config import Config, load_config, save_config
 from github_register.crypto import encrypt, decrypt, is_enabled as crypto_enabled
 from github_register.litensi import LitensiClient, LitensiError
 from github_register.notifier import send_notification, format_job_message
+from github_register.validator import validate_account, validate_totp
 from github_register.runner import run_job, silence_playwright_noise
 
 silence_playwright_noise()  # hide TargetClosedError spam when browsers close
@@ -699,6 +700,23 @@ async def api_accounts_delete_file(
         raise HTTPException(status_code=404, detail="file not found")
     path.unlink()
     return {"ok": True, "deleted": safe}
+
+
+class ValidateBody(BaseModel):
+    email: str
+    password: str
+    totp: str = ""
+
+
+@app.post("/api/accounts/validate")
+async def api_validate_account(
+    body: ValidateBody,
+    x_access_key: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Validate a registered account by attempting login + TOTP check."""
+    _require_auth(x_access_key)
+    result = validate_account(body.email, body.password, body.totp)
+    return {"ok": True, **result}
 
 
 @app.get("/api/accounts/download")
