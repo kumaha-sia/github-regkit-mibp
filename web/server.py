@@ -516,6 +516,58 @@ async def api_accounts_preview(
     return {"ok": True, "rows": rows, "total": len(rows), "name": path.name}
 
 
+@app.get("/api/accounts/all")
+async def api_accounts_all(
+    x_access_key: Optional[str] = Header(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=200),
+    search: str = Query("", max_length=200),
+    filter: str = Query("all", pattern="^(all|has2fa|no2fa|recovery)$"),
+    file: str = Query("", max_length=200),
+) -> Dict[str, Any]:
+    """Aggregated accounts from all files (or one file) with pagination."""
+    _require_auth(x_access_key)
+    files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    all_rows: List[Dict[str, Any]] = []
+    for f in files:
+        if file and f.name != file:
+            continue
+        mtime = f.stat().st_mtime
+        for row in _parse_accounts_file(f):
+            row["file"] = f.name
+            row["file_mtime"] = mtime
+            all_rows.append(row)
+
+    # filter
+    if filter == "has2fa":
+        all_rows = [r for r in all_rows if r.get("totp")]
+    elif filter == "no2fa":
+        all_rows = [r for r in all_rows if not r.get("totp")]
+    elif filter == "recovery":
+        all_rows = [r for r in all_rows if r.get("has_recovery")]
+
+    # search
+    if search.strip():
+        q = search.strip().lower()
+        all_rows = [r for r in all_rows if q in r.get("email", "").lower() or q in r.get("username", "").lower()]
+
+    total = len(all_rows)
+    pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, pages)
+    start = (page - 1) * per_page
+    rows = all_rows[start : start + per_page]
+
+    return {
+        "ok": True,
+        "rows": rows,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+    }
+
+
 @app.get("/api/accounts/recovery")
 async def api_accounts_recovery(
     email: str = Query(..., min_length=3, max_length=320),
