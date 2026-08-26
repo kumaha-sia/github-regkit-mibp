@@ -71,38 +71,21 @@ class TempikClient:
         return email, sid
 
     def get_messages(self, address: str) -> list[dict]:
-        """Get all messages for an address. Retries on transient errors."""
+        """Get all messages for an address."""
         sid = self._get_session()
         url = f"{self.api_base}/inboxes/{address}/messages"
-        last_exc = None
-        for attempt in range(3):
-            try:
-                resp = self.session.get(
-                    url,
-                    headers={"x-session-id": sid},
-                    timeout=10,
-                )
-                if resp.ok:
-                    data = resp.json()
-                    return data if isinstance(data, list) else []
-                # 403 may be transient — retry with fresh session
-                if resp.status_code == 403 and attempt < 2:
-                    self.session_id = None  # force new session
-                    sid = self._get_session()
-                    time.sleep(1)
-                    continue
-                raise TempikError(
-                    f"tempik get messages failed: HTTP {resp.status_code} "
-                    f"url={url} body={resp.text[:200]}"
-                )
-            except TempikError:
-                raise
-            except Exception as exc:
-                last_exc = exc
-                if attempt < 2:
-                    time.sleep(1)
-                    continue
-        raise TempikError(f"tempik get messages failed after retries: {last_exc}")
+        resp = self.session.get(
+            url,
+            headers={"x-session-id": sid},
+            timeout=10,
+        )
+        if not resp.ok:
+            raise TempikError(
+                f"tempik get messages failed: HTTP {resp.status_code} "
+                f"url={url} body={resp.text[:200]}"
+            )
+        data = resp.json()
+        return data if isinstance(data, list) else []
 
     def wait_for_code(
         self,
