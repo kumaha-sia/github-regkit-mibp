@@ -24,5 +24,7 @@
   "profile_bio": "",
   "profile_location": "",
   "notify_url": "",
-  "notify_token": ""
+  "notify_token": "",
+  "schedule_cron": "",
+  "schedule_count": 0
 }

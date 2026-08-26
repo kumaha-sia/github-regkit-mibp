@@ -45,6 +45,9 @@ class Config:
     # notification webhook (Telegram/Discord/generic)
     notify_url: str = ""              # webhook URL; blank = disabled
     notify_token: str = ""            # optional bearer token or Telegram bot token
+    # scheduled jobs (cron-like)
+    schedule_cron: str = ""          # cron expression, e.g. "0 9 * * *" = daily 9am
+    schedule_count: int = 0          # accounts per scheduled run; 0 = disabled
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
