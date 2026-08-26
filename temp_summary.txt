@@ -1,0 +1,87 @@
+﻿[19:28:16] --- account 1/10 ---
+[19:28:55] [*] socks proxy exit IP: 156.230.229.150 (geoip pinned, sticky)
+[19:35:45] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[19:35:48] [*] stats: OK 0 | FAIL 1
+[19:36:08] --- account 2/10 ---
+[19:36:15] [*] socks proxy exit IP: 76.36.28.29 (geoip pinned, sticky)
+[19:45:18] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[19:45:24] [*] stats: OK 0 | FAIL 2
+[19:45:44] --- account 3/10 ---
+[19:49:48] [+] 9airs3gpv15e@zickbox.com saved to github_accounts_20260825_192816.txt
+[19:49:48] [*] stats: OK 1 | FAIL 2
+[19:50:08] --- account 4/10 ---
+[19:50:16] [*] socks proxy exit IP: 103.82.246.187 (geoip pinned, sticky)
+[19:52:09] [-] account failed: no visible element matching ['#email', "input[name='email']", "input[type='email']"]
+[19:52:09] [*] stats: OK 1 | FAIL 3
+[19:52:29] --- account 5/10 ---
+[19:52:57] [*] socks proxy exit IP: 86.30.206.189 (geoip pinned, sticky)
+[19:56:39] [+] y36g4eqjv2pn@zickbox.com saved to github_accounts_20260825_192816.txt
+[19:56:39] [*] stats: OK 2 | FAIL 3
+[19:56:59] --- account 6/10 ---
+[19:57:03] [*] socks proxy exit IP: 72.56.166.199 (geoip pinned, sticky)
+[20:05:37] [+] g9r53ep6duhk@zickbox.com saved to github_accounts_20260825_192816.txt
+[20:05:37] [*] stats: OK 3 | FAIL 3
+[20:05:57] --- account 7/10 ---
+[20:06:04] [*] socks proxy exit IP: 38.28.167.23 (geoip pinned, sticky)
+[20:10:43] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[20:10:43] [*] stats: OK 3 | FAIL 4
+[20:11:03] --- account 8/10 ---
+[20:11:20] [*] socks proxy exit IP: 94.205.168.243 (geoip pinned, sticky)
+[20:15:43] [+] 0pzedqs0ycej@zickbox.com saved to github_accounts_20260825_192816.txt
+[20:15:43] [*] stats: OK 4 | FAIL 4
+[20:16:03] --- account 9/10 ---
+[20:16:10] [*] socks proxy exit IP: 155.117.180.182 (geoip pinned, sticky)
+[20:19:44] [+] 54781qfcga4l@zickbox.com saved to github_accounts_20260825_192816.txt
+[20:19:44] [*] stats: OK 5 | FAIL 4
+[20:20:04] --- account 10/10 ---
+[20:20:08] [*] socks proxy exit IP: 173.79.99.164 (geoip pinned, sticky)
+[20:24:11] [+] 9cuiuon2myhw@zickbox.com saved to github_accounts_20260825_192816.txt
+[20:24:11] [*] stats: OK 6 | FAIL 4
+[20:24:11] [*] done: OK 6 | FAIL 4
+[20:29:41] --- account 1/50 ---
+[20:29:47] [*] socks proxy exit IP: 150.228.9.227 (geoip pinned, sticky)
+[20:33:19] [+] ygafhqzo1702@zickbox.com saved to github_accounts_20260825_202941.txt
+[20:33:19] [*] stats: OK 1 | FAIL 0
+[20:33:39] --- account 2/50 ---
+[20:33:43] [*] socks proxy exit IP: 109.177.209.177 (geoip pinned, sticky)
+[20:37:01] [+] wtvwhfbpbwmi@zickbox.com saved to github_accounts_20260825_202941.txt
+[20:37:01] [*] stats: OK 2 | FAIL 0
+[20:37:21] --- account 3/50 ---
+[20:37:48] [*] socks proxy exit IP: 169.128.194.166 (geoip pinned, sticky)
+[20:37:48] [-] account failed: IP not found in database: 169.128.194.166
+[20:37:48] [*] stats: OK 2 | FAIL 1
+[20:38:08] --- account 4/50 ---
+[20:38:14] [*] socks proxy exit IP: 156.230.230.66 (geoip pinned, sticky)
+[20:42:41] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[20:42:42] [*] stats: OK 2 | FAIL 2
+[20:43:02] --- account 5/50 ---
+[20:43:33] [*] socks proxy exit IP: 2603:8088:3700:1e57:3402:f154:3a1d:b745 (geoip pinned, sticky)
+[20:48:24] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[20:48:28] [*] stats: OK 2 | FAIL 3
+[20:48:48] --- account 6/50 ---
+[20:48:58] [*] socks proxy exit IP: 45.127.246.49 (geoip pinned, sticky)
+[20:52:23] [+] ntmkbkc8lka9@zickbox.com saved to github_accounts_20260825_202941.txt
+[20:52:23] [*] stats: OK 3 | FAIL 3
+[20:52:43] --- account 7/50 ---
+[20:52:48] [*] socks proxy exit IP: 91.201.161.28 (geoip pinned, sticky)
+[20:56:28] [+] 1br74i249pp8@zickbox.com saved to github_accounts_20260825_202941.txt
+[20:56:28] [*] stats: OK 4 | FAIL 3
+[20:56:48] --- account 8/50 ---
+[20:57:29] [*] socks proxy exit IP: 174.73.25.165 (geoip pinned, sticky)
+[21:02:03] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[21:02:06] [*] stats: OK 4 | FAIL 4
+[21:02:26] --- account 9/50 ---
+[21:02:30] [*] socks proxy exit IP: 68.162.80.96 (geoip pinned, sticky)
+[21:06:19] [+] 6uxicz6n6bhs@zickbox.com saved to github_accounts_20260825_202941.txt
+[21:06:19] [*] stats: OK 5 | FAIL 4
+[21:06:39] --- account 10/50 ---
+[21:06:50] [*] socks proxy exit IP: 14.242.213.141 (geoip pinned, sticky)
+[21:10:02] [+] n6w7g09s8lbw@zickbox.com saved to github_accounts_20260825_202941.txt
+[21:10:02] [*] stats: OK 6 | FAIL 4
+[21:10:22] --- account 11/50 ---
+[21:11:07] [*] done: OK 6 | FAIL 4
+[21:42:28] --- account 1/1 ---
+[21:42:32] [*] socks proxy exit IP: 103.199.111.101 (geoip pinned, sticky)
+[21:47:53] [-] account failed: email form did not appear (DataDome challenge page); IP is blocked by DataDome â use a residential proxy in config
+[21:47:56] [*] stats: OK 0 | FAIL 1
+[21:47:56] [*] done: OK 0 | FAIL 1

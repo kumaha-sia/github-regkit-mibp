@@ -42,6 +42,9 @@ class Config:
     profile_name: str = ""            # blank = Random User
     profile_bio: str = ""             # blank = ZenQuotes
     profile_location: str = ""        # blank = Random User country
+    # notification webhook (Telegram/Discord/generic)
+    notify_url: str = ""              # webhook URL; blank = disabled
+    notify_token: str = ""            # optional bearer token or Telegram bot token
 
     @classmethod
     def from_dict(cls, data: dict) -> "Config":

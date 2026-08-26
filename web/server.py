@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:
 from github_register.config import Config, load_config, save_config
 from github_register.crypto import encrypt, decrypt, is_enabled as crypto_enabled
 from github_register.litensi import LitensiClient, LitensiError
+from github_register.notifier import send_notification, format_job_message
 from github_register.runner import run_job, silence_playwright_noise
 
 silence_playwright_noise()  # hide TargetClosedError spam when browsers close
@@ -214,6 +215,8 @@ class ConfigBody(BaseModel):
     profile_name: Optional[str] = None
     profile_bio: Optional[str] = None
     profile_location: Optional[str] = None
+    notify_url: Optional[str] = None
+    notify_token: Optional[str] = None
 
 
 def _save_config(cfg: Config) -> None:
@@ -253,6 +256,14 @@ def _run_job(count: int) -> None:
         )
         with _job_lock:
             _job_state.update(success=ok, fail=fail, accounts_file=str(out))
+        # send webhook notification if configured
+        if getattr(cfg, "notify_url", "") and getattr(cfg, "notify_token", "") or getattr(cfg, "notify_url", ""):
+            msg = format_job_message(ok, fail, count, str(out) if out else "")
+            send_notification(
+                getattr(cfg, "notify_url", ""),
+                getattr(cfg, "notify_token", ""),
+                msg, ok, fail, count, str(out) if out else "",
+            )
     except Exception as exc:
         _append_log(f"[!] job error: {exc}")
         with _job_lock:

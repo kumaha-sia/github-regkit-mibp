@@ -22,5 +22,7 @@
   "complete_profile": true,
   "profile_name": "",
   "profile_bio": "",
-  "profile_location": ""
+  "profile_location": "",
+  "notify_url": "",
+  "notify_token": ""
 }
