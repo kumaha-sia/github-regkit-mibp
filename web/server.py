@@ -93,7 +93,26 @@ _job_state: Dict[str, Any] = {
     "finished_at": None,
     "error": "",
     "accounts_file": "",
+    "accounts": [],  # per-account status: [{email, status: pending|running|done|failed, reason}]
 }
+_JOB_HISTORY_FILE = ACCOUNTS_DIR / "jobs.json"
+
+
+def _load_job_history() -> List[Dict[str, Any]]:
+    """Load job history for resume support."""
+    try:
+        if _JOB_HISTORY_FILE.is_file():
+            return json.loads(_JOB_HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return []
+
+
+def _save_job_history(jobs: List[Dict[str, Any]]) -> None:
+    try:
+        _JOB_HISTORY_FILE.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 app = FastAPI(title="GitHub Register", version="1.0.0")
 
