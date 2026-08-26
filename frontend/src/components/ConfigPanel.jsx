@@ -6,10 +6,16 @@ import { Button, Card, Input } from './ui.jsx'
 // `wide: true` -> field mengambil full width dalam grid group (mis. label
 // panjang, teks bebas, secret string). Default = field kompak (setengah kolom).
 const FIELDS = [
-  { key: 'litensi_api_id', label: 'Litensi API ID', group: 'Litensi Mail' },
-  { key: 'litensi_api_key', label: 'Litensi API Key', secret: true, group: 'Litensi Mail', wide: true },
-  { key: 'litensi_site', label: 'Site (domain, e.g. github.com)', group: 'Litensi Mail' },
-  { key: 'litensi_zone', label: 'Zone (blank = automatic cheapest)', group: 'Litensi Mail', hasZoneChecker: true, wide: true },
+  { key: 'email_provider', label: 'Email Provider', group: 'Email Provider', type: 'select', options: [
+    { value: 'litensi', label: 'Litensi (paid, API key required)' },
+    { value: 'tempik', label: 'Tempik (free, self-hosted, no auth)' },
+  ], wide: true },
+  { key: 'litensi_api_id', label: 'Litensi API ID', group: 'Litensi Mail', showIf: { email_provider: 'litensi' } },
+  { key: 'litensi_api_key', label: 'Litensi API Key', secret: true, group: 'Litensi Mail', wide: true, showIf: { email_provider: 'litensi' } },
+  { key: 'litensi_site', label: 'Site (domain, e.g. github.com)', group: 'Litensi Mail', showIf: { email_provider: 'litensi' } },
+  { key: 'litensi_zone', label: 'Zone (blank = automatic cheapest)', group: 'Litensi Mail', hasZoneChecker: true, wide: true, showIf: { email_provider: 'litensi' } },
+  { key: 'tempik_api_base', label: 'Tempik API Base URL', group: 'Tempik Mail', wide: true, showIf: { email_provider: 'tempik' } },
+  { key: 'tempik_domains', label: 'Tempik Domains (comma-separated)', group: 'Tempik Mail', wide: true, showIf: { email_provider: 'tempik' } },
   { key: 'register_count', label: 'Register Count', type: 'number', group: 'Registration' },
   { key: 'delay_sec', label: 'Delay between accounts (seconds)', type: 'number', group: 'Registration' },
   { key: 'max_username_tries', label: 'Max username tries', type: 'number', group: 'Registration' },
@@ -34,7 +40,9 @@ const FIELDS = [
 // Group-level metadata: which column (kiri/kanan) di layout 2-kolom di layar lebar.
 // Kelompokkan yang isinya lebih banyak di kiri, sisanya di kanan agar seimbang.
 const GROUP_COLUMN = {
+  'Email Provider': 'left',
   'Litensi Mail': 'left',
+  'Tempik Mail': 'left',
   'Registration': 'left',
   'Advanced': 'right',
   'Post-Signup Stages': 'right',
@@ -154,7 +162,17 @@ export default function ConfigPanel() {
 }
 
 function GroupCard({ name, cfg, set, onCheckZones }) {
-  const fields = FIELDS.filter((f) => f.group === name)
+  const fields = FIELDS.filter((f) => {
+    if (f.group !== name) return false
+    // showIf: field only visible when another config field matches
+    if (f.showIf) {
+      for (const [k, v] of Object.entries(f.showIf)) {
+        if ((cfg[k] || '') !== v) return false
+      }
+    }
+    return true
+  })
+  if (fields.length === 0) return null
   return (
     <Card style={styles.card}>
       <div style={styles.groupTitle}>{name}</div>
@@ -187,6 +205,22 @@ function Field({ f, value, onChange, onCheckZones }) {
           style={{ width: 16, height: 16, accentColor: 'var(--accent)' }}
         />
         <span style={{ fontSize: 13, color: 'var(--text)' }}>{f.label}</span>
+      </label>
+    )
+  }
+  if (f.type === 'select') {
+    return (
+      <label style={styles.field}>
+        <span style={styles.label}>{f.label}</span>
+        <select
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          style={styles.select}
+        >
+          {(f.options || []).map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
       </label>
     )
   }
@@ -390,6 +424,14 @@ const styles = {
     fontSize: 13, color: 'var(--muted)',
   },
   label: { fontWeight: 500 },
+  select: {
+    width: '100%', minHeight: 38,
+    border: '1px solid var(--border)', borderRadius: 10,
+    padding: '8px 12px', outline: 'none',
+    background: 'var(--bg-input)', color: 'var(--text-primary)',
+    font: 'inherit', fontSize: 13, cursor: 'pointer',
+    transition: 'border-color 160ms ease, box-shadow 180ms ease',
+  },
   inputRow: { display: 'flex', gap: 8, alignItems: 'stretch', flexWrap: 'wrap' },
   checkBtn: { padding: '10px 14px', fontSize: 12.5, whiteSpace: 'nowrap', flexShrink: 0 },
   saveBar: {

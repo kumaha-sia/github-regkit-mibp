@@ -2010,6 +2010,8 @@ def _post_form_flow(
     state = _wait_post_submit(page, context, timeout=120, log=log, stop=stop)
     if state == "verify":
         log(f"[*] verification page: {page.url}")
+        # Litensi needs order_id as first arg; Tempik needs email as first arg.
+        # Pass both as keyword args — each client picks what it needs.
         code = mail.wait_for_code(
             order_id,
             email=email,
