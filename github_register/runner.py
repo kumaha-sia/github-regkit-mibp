@@ -1542,11 +1542,33 @@ def _create_repository(page, username: str, base_name: str, log) -> str:
 
     name = base_name or "hello"
     page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
-    try:
-        page.wait_for_selector("#repository-name-input", state="visible", timeout=30_000)
-    except Exception:
-        raise SignupError(f"repo form not found; url={page.url} body={_page_text(page)[:200]!r}")
-    inp = page.locator("#repository-name-input").first
+    # try multiple selectors — GitHub may have changed the repo name input
+    repo_selectors = [
+        "#repository-name-input",
+        "input[name='repository[name]']",
+        "input[aria-label='Repository name']",
+        "input[placeholder*='repository' i]",
+        "input[placeholder*='repo' i]",
+        "input[data-testid='repository-name-input']",
+    ]
+    inp = None
+    for sel in repo_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                inp = loc
+                log(f"[*] repo name input found: {sel}")
+                break
+        except Exception:
+            continue
+    if inp is None:
+        # last resort: wait for any text input on the page
+        try:
+            page.wait_for_selector("input[type='text']", state="visible", timeout=15_000)
+            inp = page.locator("input[type='text']").first
+            log("[*] repo name input found via fallback: input[type='text']")
+        except Exception:
+            raise SignupError(f"repo form not found; url={page.url} body={_page_text(page)[:300]!r}")
     inp.fill(name)
     time.sleep(1.5)  # let GitHub validate + enable the submit button
     try:
@@ -1615,31 +1637,56 @@ def _complete_profile(page, username: str, cfg: Config, log) -> None:
 
     if cfg.set_profile_status:
         status = cfg.profile_status.strip() or "On vacation"
-        # Recording: profile -> react-partial-anchor button "Set status" ->
-        # #user-status-status-input -> portal "Set status" submit button.
-        # Do not use the preset chip: it is not present on a fresh profile.
-        launcher = page.locator("react-partial-anchor button, button").filter(
-            has_text="Set status"
-        ).first
+        # Try multiple selectors for the status launcher button
+        launcher_selectors = [
+            "button:has-text('Set status')",
+            "button[aria-label*='status' i]",
+            "react-partial-anchor button",
+            "button:has-text('Edit status')",
+            "summary:has-text('status')",
+        ]
         launcher_opened = False
-        try:
-            launcher.click(timeout=8_000)
-            launcher_opened = True
-        except Exception:
+        for sel in launcher_selectors:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() and loc.is_visible():
+                    loc.click(timeout=5000)
+                    launcher_opened = True
+                    log(f"[*] profile status launcher clicked: {sel}")
+                    break
+            except Exception:
+                continue
+        if not launcher_opened:
             launcher_opened = _visible_dom_click(
                 page,
                 "b => /status/i.test(b.getAttribute('aria-label') || '') || "
-                "(b.textContent || '').trim() === 'Set status'",
+                "(b.textContent || '').trim() === 'Set status' || "
+                "(b.textContent || '').trim() === 'Edit status'",
             )
             if not launcher_opened:
                 log("[i] profile status launcher not found; status skipped")
             else:
                 log("[*] profile status launcher clicked via DOM")
         if launcher_opened:
-            status_input = page.locator("#user-status-status-input").first
-            try:
-                status_input.wait_for(state="visible", timeout=8_000)
-            except Exception:
+            # try multiple selectors for the status input
+            status_input = None
+            input_selectors = [
+                "#user-status-status-input",
+                "input[aria-label*='status' i]",
+                "input[placeholder*='status' i]",
+                "textarea[aria-label*='status' i]",
+            ]
+            for sel in input_selectors:
+                try:
+                    loc = page.locator(sel).first
+                    if loc.count():
+                        loc.wait_for(state="visible", timeout=5000)
+                        status_input = loc
+                        log(f"[*] status input found: {sel}")
+                        break
+                except Exception:
+                    continue
+            if status_input is None:
                 raise SignupError("profile status popup did not open")
             status_input.fill(status, timeout=8_000)
             if status_input.input_value(timeout=3_000) != status:
@@ -1749,36 +1796,66 @@ def _enable_2fa(page, log) -> tuple[str, str]:
     except Exception:
         pass  # already on the page; proceed
 
-    # wait for the setup wizard (QR code page shows the secret in a hidden dialog)
-    try:
-        page.wait_for_selector(
-            "div[data-target='two-factor-setup-verification.mashedSecret']",
-            state="attached",  # present in DOM even while the dialog is closed
-            timeout=45_000,
-        )
-    except Exception:
-        raise SignupError(f"2FA setup wizard did not load; url={page.url}")
+    # wait for the setup wizard — try multiple selectors (GitHub may have changed DOM)
+    wizard_selectors = [
+        "div[data-target='two-factor-setup-verification.mashedSecret']",
+        "[data-target*='mashedSecret']",
+        "[data-target*='two-factor']",
+        "div[role='dialog']",
+        "#two-factor-setup",
+    ]
+    wizard_loaded = False
+    for sel in wizard_selectors:
+        try:
+            page.wait_for_selector(sel, state="attached", timeout=15_000)
+            wizard_loaded = True
+            log(f"[*] 2FA wizard found: {sel}")
+            break
+        except Exception:
+            continue
+    if not wizard_loaded:
+        # check if we're already on a 2FA page (maybe different URL structure)
+        if "two_factor" not in (page.url or ""):
+            raise SignupError(f"2FA setup wizard did not load; url={page.url}")
 
-    # reveal the setup key via the 'setup key' button (mirrors the recording),
-    # then read the secret from the dialog's data-target div.
-    try:
-        page.locator("#dialog-show-two-factor-setup-verification-mashed-secret").first.click(
-            timeout=10_000
-        )
-        time.sleep(0.8)
-    except Exception:
-        pass  # dialog content is in the DOM even when closed — read anyway
+    # reveal the setup key via the 'setup key' button
+    reveal_selectors = [
+        "#dialog-show-two-factor-setup-verification-mashed-secret",
+        "button:has-text('setup key')",
+        "button:has-text('Setup key')",
+        "button:has-text('text code')",
+        "details summary:has-text('setup key')",
+    ]
+    for sel in reveal_selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() and loc.is_visible():
+                loc.click(timeout=5000)
+                log(f"[*] 2FA setup key revealed via: {sel}")
+                break
+        except Exception:
+            continue
+    time.sleep(1)
 
+    # read the TOTP secret — try multiple selectors and patterns
     secret = ""
-    try:
-        secret = (
-            page.locator(
-                "div[data-target='two-factor-setup-verification.mashedSecret']"
-            ).first.inner_text(timeout=5000)
-            or ""
-        ).strip()
-    except Exception:
-        pass
+    secret_selectors = [
+        "div[data-target='two-factor-setup-verification.mashedSecret']",
+        "[data-target*='mashedSecret']",
+        "code[data-target*='secret']",
+        "samp",
+        "code",
+    ]
+    for sel in secret_selectors:
+        try:
+            txt = page.locator(sel).first.inner_text(timeout=3000) or ""
+            txt = txt.strip().replace(" ", "")
+            if txt and len(txt) >= 16 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" for c in txt.upper()):
+                secret = txt
+                log(f"[*] TOTP secret found via: {sel}")
+                break
+        except Exception:
+            continue
     if not secret:
         # fallback: scan page HTML for a base32-looking secret (16-32 chars)
         import re
