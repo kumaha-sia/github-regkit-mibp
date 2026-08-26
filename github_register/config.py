@@ -25,6 +25,7 @@ class Config:
     fresh_profile: bool = True
     proxy_hard_block_retries: int = 2
     proxy_rate_limit_retries: int = 2
+    rotate_ip_per_account: bool = True   # new sticky port (new IP) for each account
     # post-signup stages (from user recording)
     create_repo: bool = True          # stage 4: create first repository
     repo_name: str = "hello"          # repo name prefix (username-suffix appended on conflict)

@@ -5,6 +5,7 @@ import json
 import hashlib
 import logging
 import os
+import random
 import socket
 import socketserver
 import threading
@@ -108,6 +109,89 @@ def _sleep_with_cancel(seconds: float, stop=None) -> None:
         time.sleep(min(0.25, deadline - time.time()))
 
 
+def _human_delay(base: float, jitter: float = 0.4, stop=None) -> None:
+    """Sleep base ± jitter seconds (Gaussian). Mimics natural human pauses."""
+    delay = max(0.3, random.gauss(base, jitter))
+    _sleep_with_cancel(delay, stop)
+
+
+def _human_scroll(page, direction: str = "down", distance: int = 0) -> None:
+    """Scroll like a human: variable speed, slight overshoot, settle back."""
+    if not distance:
+        distance = random.randint(150, 500)
+    if direction == "up":
+        distance = -distance
+    try:
+        # scroll in 2-3 small steps (not one big jump)
+        steps = random.randint(2, 3)
+        for i in range(steps):
+            chunk = distance // steps + random.randint(-20, 20)
+            page.evaluate(f"window.scrollBy(0, {chunk})")
+            time.sleep(random.uniform(0.08, 0.25))
+        # small settle-back (overshoot correction)
+        if random.random() < 0.4:
+            time.sleep(random.uniform(0.1, 0.3))
+            page.evaluate(f"window.scrollBy(0, {-random.randint(10, 40)})")
+    except Exception:
+        pass
+
+
+def _human_mouse_move(page, target_x: int = 0, target_y: int = 0) -> None:
+    """Move mouse like a human: curved path, variable speed, slight wobble.
+
+    If target is (0,0), picks a random position in the viewport.
+    """
+    try:
+        vw = page.evaluate("window.innerWidth") or 1280
+        vh = page.evaluate("window.innerHeight") or 720
+        if not target_x and not target_y:
+            target_x = random.randint(100, vw - 100)
+            target_y = random.randint(100, vh - 100)
+        # move in 3-5 steps with slight random offsets (bezier-like curve)
+        steps = random.randint(3, 5)
+        for i in range(1, steps + 1):
+            ratio = i / steps
+            x = int(target_x * ratio + random.randint(-15, 15))
+            y = int(target_y * ratio + random.randint(-15, 15))
+            page.mouse.move(x, y)
+            time.sleep(random.uniform(0.02, 0.08))
+        # final move to exact target
+        page.mouse.move(target_x, target_y)
+    except Exception:
+        pass
+
+
+def _human_mouse_to_element(page, locator) -> tuple[int, int]:
+    """Move mouse to an element's bounding box center with human-like path.
+
+    Returns (x, y) of the element center for subsequent click.
+    """
+    try:
+        box = locator.bounding_box(timeout=3000)
+        if box:
+            # land slightly off-center (humans don't hit exact center)
+            x = int(box["x"] + box["width"] * random.uniform(0.3, 0.7))
+            y = int(box["y"] + box["height"] * random.uniform(0.3, 0.7))
+            _human_mouse_move(page, x, y)
+            time.sleep(random.uniform(0.05, 0.15))  # brief hover before click
+            return x, y
+    except Exception:
+        pass
+    return 0, 0
+
+
+def _human_click(page, locator, timeout: int = 10000) -> None:
+    """Click an element with human-like mouse movement + hover + variable delay."""
+    _human_mouse_to_element(page, locator)
+    locator.click(timeout=timeout)
+
+
+def _human_random_pause(stop=None) -> None:
+    """Occasional random pause (10% chance, 1-3s) — simulates distraction/thinking."""
+    if random.random() < 0.10:
+        _sleep_with_cancel(random.uniform(1.0, 3.0), stop)
+
+
 def silence_playwright_noise() -> None:
     """Suppress the asyncio 'Task exception was never retrieved' spam.
 
@@ -180,6 +264,30 @@ def _socks_exit_ip(url: str, timeout: int = 12) -> str:
         if attempt == 0:
             time.sleep(3)  # give the sticky session a moment to warm up
     raise SignupError(f"socks exit-IP lookup failed: {last_exc}")
+
+
+def _validate_geoip(ip: str) -> bool:
+    """Check if an IP is in a public geoip database (fast, no proxy needed).
+
+    Camoufox fails with 'IP not found in database' for obscure IP ranges.
+    This pre-check avoids launching a browser that will immediately error.
+    """
+    import requests as _requests
+
+    for api in (
+        f"https://ipapi.co/{ip}/json/",
+        f"https://ipinfo.io/{ip}/json",
+    ):
+        try:
+            resp = _requests.get(api, timeout=8)
+            if resp.ok:
+                data = resp.json()
+                # success = has country code
+                if data.get("country") or data.get("country_code"):
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -492,15 +600,26 @@ def _human_fill(page, selectors: list[str], value: str, stop=None) -> None:
     # an invisible overlay above a perfectly valid field, causing click() to
     # time out after "performing click action". DOM focus has the same input
     # semantics without needing a pointer target.
+    _human_mouse_to_element(page, field)
     try:
         field.focus(timeout=5_000)
     except Exception:
         field.evaluate("el => el.focus()")
     field.fill("")
-    # Fixed cadence is deliberate: rapid random typing is less human than a
-    # coherent typing speed. Passwords use the same path but are never logged.
-    field.press_sequentially(value, delay=55)
+    # Variable typing speed: base 45-75ms per char, occasional longer pauses
+    # simulating natural rhythm (fast bursts + brief thinking pauses)
+    for ch in value:
+        _raise_if_cancelled(stop)
+        field.press_sequentially(ch, delay=0)
+        # base delay with jitter
+        base_ms = random.randint(40, 80)
+        # 12% chance of a longer pause (150-350ms) — "thinking about next char"
+        if random.random() < 0.12:
+            base_ms = random.randint(150, 350)
+        time.sleep(base_ms / 1000)
     _raise_if_cancelled(stop)
+    # brief pause before blur (human reaction time)
+    time.sleep(random.uniform(0.15, 0.4))
     try:
         field.evaluate("el => el.blur()")
     except Exception:
@@ -572,6 +691,42 @@ def _is_hard_block(page) -> bool:
     return any(marker in text for marker in _DATADOME_HARD_BLOCK_MARKERS)
 
 
+def _log_block_ip(page, log) -> None:
+    """When a hard block is detected, log the blocked IP and current proxy exit IP.
+
+    DataDome pages often include the blocked IP in the page text or URL.
+    This helps diagnose whether the proxy is leaking the real IP.
+    """
+    import re
+
+    blocked_ip = ""
+    try:
+        text = _page_text(page)[:2000]
+        m = re.search(r"IP[:\s]+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", text)
+        if m:
+            blocked_ip = m.group(1)
+    except Exception:
+        pass
+    if not blocked_ip:
+        try:
+            m = re.search(r"IP[:\s]+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", page.url or "")
+            if m:
+                blocked_ip = m.group(1)
+        except Exception:
+            pass
+    proxy_ip = _last_exit_ip or "(unknown — proxy exit IP not resolved)"
+    if blocked_ip:
+        log(f"[!] DataDome blocked IP: {blocked_ip} | proxy exit IP: {proxy_ip}")
+        if blocked_ip == proxy_ip:
+            log("[i] blocked IP matches proxy exit — proxy is active but this IP is flagged")
+        elif proxy_ip and proxy_ip != "(unknown)":
+            log("[!] BLOCKED IP != PROXY EXIT — proxy may be leaking! Check proxy config")
+        else:
+            log("[!] blocked IP looks like your real IP — proxy is NOT active")
+    else:
+        log(f"[!] DataDome hard block detected | proxy exit IP: {proxy_ip}")
+
+
 def _raise_if_rate_limited(page) -> None:
     text = _page_text(page).lower()
     if any(marker in text for marker in _RATE_LIMIT_MARKERS):
@@ -631,35 +786,117 @@ def _form_ready(page) -> bool:
         return False
 
 
-def _open_signup(page, log, attempts: int = 3, stop=None) -> None:
-    """Open github.com/signup and fight through DataDome retries/challenge.
+def _homepage_warmup(page, log, stop=None, dwell: int = 12) -> bool:
+    """Browse the GitHub homepage like a human before navigating to /signup.
 
-    Strategy: direct goto first; on DataDome, try the human path
-    (homepage -> click 'Sign up' link) which carries a warm session,
-    then retry direct loads. Manual solve window is given at the end.
+    Loads the homepage, scrolls, moves mouse, waits for DataDome tags.js to
+    set the trust cookie, then checks if the page is usable. Returns True if
+    warm-up succeeded (no hard block), False if the IP is hard-blocked.
+    """
+    log(f"[*] homepage warm-up ({dwell}s) — letting DataDome trust cookie settle")
+    # retry homepage load up to 2 times on timeout (network may be slow)
+    for load_attempt in range(2):
+        try:
+            page.goto("https://github.com/", wait_until="domcontentloaded", timeout=90_000)
+            break
+        except Exception as exc:
+            if "timeout" in str(exc).lower() and load_attempt == 0:
+                log(f"[!] homepage timeout — retrying ({exc})")
+                _sleep_with_cancel(3, stop)
+                continue
+            log(f"[!] homepage goto failed: {exc}")
+            return False
+    if _is_hard_block(page):
+        _log_block_ip(page, log)
+        return False
+
+    # simulate human browsing: mouse movement, scrolling, reading pauses
+    scroll_done = False
+    for i in range(dwell):
+        _raise_if_cancelled(stop)
+        # random mouse movement (40% chance each second)
+        if random.random() < 0.40:
+            _human_mouse_move(page)
+        # scroll pattern: down at ~3s, more at ~7s, back up at ~10s
+        if i == random.randint(2, 4) and not scroll_done:
+            _human_scroll(page, "down", random.randint(200, 500))
+            scroll_done = True
+        elif i == random.randint(6, 8):
+            _human_scroll(page, "down", random.randint(100, 300))
+        elif i == random.randint(9, 11):
+            if random.random() < 0.5:
+                _human_scroll(page, "up", random.randint(100, 300))
+        # variable sleep (not fixed 1s)
+        _human_delay(1.0, 0.3, stop)
+        if _is_hard_block(page):
+            _log_block_ip(page, log)
+            return False
+    log("[*] homepage warm-up complete")
+    return True
+
+
+def _open_signup(page, log, attempts: int = 3, stop=None) -> None:
+    """Open github.com/signup with homepage warm-up first.
+
+    Strategy:
+      1. Homepage warm-up (12s) — earn DataDome trust cookie before /signup
+      2. Navigate to /signup via 'Sign up' link (human path) or direct goto
+      3. On DataDome challenge: longer warm-up (20s) + retry
+      4. Final: 120s manual solve window
     """
     sel = ", ".join(_EMAIL_INPUTS)
     last_hint = ""
-    goto_ok = True
+
+    # --- Phase 1: homepage warm-up before first /signup attempt ---
+    if not _homepage_warmup(page, log, stop=stop, dwell=12):
+        _log_block_ip(page, log)
+        raise SignupBlocked(
+            "DataDome HARD BLOCK on homepage warm-up — this IP is blocked. "
+            "Change IP, disable VPN/WARP, or configure a residential proxy."
+        )
+
     for attempt in range(1, attempts + 1):
         _raise_if_cancelled(stop)
+        # navigate to /signup: prefer clicking the link (human path), fallback to goto
         try:
-            if goto_ok:
+            link = page.get_by_role("link", name="Sign up").first
+            if link.count():
+                link.click(timeout=10_000)
+                log("[*] navigated to /signup via 'Sign up' link")
+            else:
                 page.goto("https://github.com/signup", wait_until="domcontentloaded", timeout=60_000)
+                log("[*] navigated to /signup via direct goto")
         except Exception as exc:
-            log(f"[!] goto failed ({exc}); retry {attempt}/{attempts}")
-            goto_ok = False
-        # wait up to 25s for the email form (JS render) or a stable challenge page
-        deadline = time.time() + 25
+            log(f"[!] navigation to /signup failed ({exc}); trying direct goto")
+            try:
+                page.goto("https://github.com/signup", wait_until="domcontentloaded", timeout=60_000)
+            except Exception as exc2:
+                log(f"[!] goto /signup also failed: {exc2}")
+
+        # wait for the email form to appear
+        deadline = time.time() + 30
         while time.time() < deadline:
             _raise_if_cancelled(stop)
             _raise_if_rate_limited(page)
             if _is_hard_block(page):
-                raise SignupBlocked(
-                    "DataDome HARD BLOCK: 'Access is temporarily restricted' — this IP is "
-                    "temporarily blocked by GitHub. Change IP, disable VPN/WARP, change network, "
-                    "or configure a residential proxy and retry."
-                )
+                _log_block_ip(page, log)
+                # Phase 2: longer warm-up retry on hard block
+                if attempt < attempts:
+                    log("[!] hard block on /signup — trying longer homepage warm-up (20s)")
+                    if _homepage_warmup(page, log, stop=stop, dwell=20):
+                        break  # warm-up OK, retry /signup in next attempt
+                    else:
+                        _log_block_ip(page, log)
+                        raise SignupBlocked(
+                            "DataDome HARD BLOCK persists after warm-up — IP is flagged. "
+                            "Change IP or proxy provider."
+                        )
+                else:
+                    raise SignupBlocked(
+                        "DataDome HARD BLOCK: 'Access is temporarily restricted' — this IP is "
+                        "temporarily blocked by GitHub. Change IP, disable VPN/WARP, change network, "
+                        "or configure a residential proxy and retry."
+                    )
             if _form_ready(page):
                 log("[*] github.com/signup email form is ready")
                 return
@@ -668,37 +905,10 @@ def _open_signup(page, log, attempts: int = 3, stop=None) -> None:
                 last_hint = hint
                 _try_click_datadome(page, log)
             _sleep_with_cancel(2, stop)
-        if last_hint and attempt == 1:
-            # human-like navigation: homepage -> Sign up link (warmer session)
-            try:
-                _raise_if_cancelled(stop)
-                log("[*] DataDome hit — trying homepage -> 'Sign up' navigation")
-                page.goto("https://github.com/", wait_until="domcontentloaded", timeout=60_000)
-                if _is_hard_block(page):
-                    raise SignupBlocked(
-                        "DataDome HARD BLOCK: 'Access is temporarily restricted' — this IP is "
-                        "temporarily blocked by GitHub. Change IP, disable VPN/WARP, change network, "
-                        "or configure a residential proxy and retry."
-                    )
-                _sleep_with_cancel(2, stop)
-                link = page.get_by_role("link", name="Sign up").first
-                if link.count():
-                    link.click(timeout=10_000)
-                else:
-                    page.goto("https://github.com/signup", wait_until="domcontentloaded", timeout=60_000)
-                deadline = time.time() + 30
-                while time.time() < deadline:
-                    _raise_if_cancelled(stop)
-                    _raise_if_rate_limited(page)
-                    if _form_ready(page):
-                        log("[*] email form ready via homepage navigation")
-                        return
-                    _try_click_datadome(page, log)
-                    _sleep_with_cancel(2, stop)
-            except Exception as exc:
-                log(f"[!] homepage navigation failed: {exc}")
+
         if attempt < attempts:
             log(f"[!] {last_hint or 'form not ready'} — reload attempt {attempt + 1}/{attempts}")
+
     if last_hint:
         # final long wait: challenge may need a manual click in the visible window
         log(f"[!] {last_hint} — waiting up to 120s; solve the check in the browser window "
@@ -797,6 +1007,9 @@ def _click_create_account(page, log, wait_enabled: int = 30, stop=None) -> None:
         # an invisible/visible Octocaptcha overlay is often what eats the
         # pointer click — poke the captcha frame first so it can finish
         _try_click_datadome(page, log)
+        # human-like: move mouse to button, hover briefly, then click
+        _human_mouse_to_element(page, btn)
+        _human_delay(0.3, 0.15, stop)  # brief hover before click
         try:
             btn.click(timeout=10_000)
             log("[*] 'Create account' clicked (button enabled)")
@@ -829,7 +1042,11 @@ def _fill_and_create_account(page, base_username: str, tries: int, log, stop=Non
         _raise_if_cancelled(stop)
         _human_fill(page, _USERNAME_INPUTS, name, stop=stop)
         # GitHub debounces username availability; wait for the server result.
-        _sleep_with_cancel(3.5, stop)
+        # Variable delay: 3-5s (not fixed 3.5s)
+        _human_delay(3.5, 0.8, stop)
+        _human_random_pause(stop)
+        # scroll down to see the submit button (human behavior)
+        _human_scroll(page, "down", random.randint(50, 150))
         _click_create_account(page, log, stop=stop)
 
         # wait for reaction: error under username field OR page moving forward
@@ -1025,12 +1242,29 @@ def _browser_ctx_options(cfg: Config, log=None) -> dict:
         if _proxy_is_socks(proxy):
             try:
                 exit_ip = _socks_exit_ip(proxy_url)
+                # reject IPv6 — DataDome is stricter with IPv6, and Camoufox
+                # geoip works best with IPv4
+                if ":" in exit_ip:
+                    if log:
+                        log(f"[!] IPv6 exit IP detected ({exit_ip}) — rotating to get IPv4")
+                    _rotate_sticky_proxy()
+                    raise SignupError("IPv6 exit IP, need IPv4")
+                # validate IP is in a known geoip database (Camoufox will fail
+                # with "IP not found in database" for obscure ranges)
+                if not _validate_geoip(exit_ip):
+                    if log:
+                        log(f"[!] IP {exit_ip} not in geoip database — rotating")
+                    _rotate_sticky_proxy()
+                    raise SignupError(f"IP {exit_ip} not in geoip database")
                 opts["geoip"] = exit_ip
                 global _last_exit_ip
                 _last_exit_ip = exit_ip  # consumed by trust-cookie IP binding
                 if log:
                     log(f"[*] socks proxy exit IP: {exit_ip} (geoip pinned, sticky)")
             except Exception as exc:
+                # re-raise so the caller (register_one) can retry with a new IP
+                if "IPv6 exit IP" in str(exc) or "not in geoip database" in str(exc):
+                    raise
                 opts["geoip"] = False
                 _last_exit_ip = None  # no IP to bind — do NOT restore stale cookies
                 if log:
@@ -1718,15 +1952,24 @@ def _fill_signup_form(page, cfg, email, password, log, stop) -> str:
     Returns the accepted username. Raises SignupError with a clear reason when
     the form cannot be completed (validation error, overlay, rate limit).
     """
+    # human-like: scroll down to see the form, random pause to "read" it
+    _human_scroll(page, "down", random.randint(100, 250))
+    _human_delay(1.0, 0.4, stop)  # "look at the form"
+    _human_random_pause(stop)
+
     # Fill in the same order as a person: email -> wait -> password ->
     # wait -> username. Each blur gives GitHub's async form validators and
     # Octocaptcha time to settle before Create account is considered.
     _human_fill(page, _EMAIL_INPUTS, email, stop=stop)
-    _sleep_with_cancel(1.5, stop)
+    _human_delay(1.2, 0.5, stop)  # variable pause after email
     _raise_if_rate_limited(page)
+    _human_random_pause(stop)
+
     _human_fill(page, _PASSWORD_INPUTS, password, stop=stop)
-    _sleep_with_cancel(1.5, stop)
+    _human_delay(1.0, 0.4, stop)  # variable pause after password
     _raise_if_rate_limited(page)
+    _human_random_pause(stop)
+
     # 3s pause after username -> CLICK Create account -> on username error
     # append one digit and retry (name -> name2 -> name3 ...)
     return _fill_and_create_account(
@@ -1967,6 +2210,10 @@ def register_one(
 ) -> Optional[str]:
     """Register one account; returns its one-line account record or None."""
     stop = cancel_cb or (lambda: False)
+    # rotate IP before each account to avoid DataDome flagging reused IPs
+    if cfg.proxy and getattr(cfg, "rotate_ip_per_account", False):
+        _rotate_sticky_proxy()
+        log("[*] IP rotated for new account (rotate_ip_per_account=true)")
     lit = LitensiClient(cfg.litensi_api_id, cfg.litensi_api_key, cfg.litensi_site, cfg.litensi_zone)
     email, order_id = lit.create_mailbox()
     log(f"[*] mailbox: {email} (order {order_id})")
@@ -1974,6 +2221,7 @@ def register_one(
         password = generate_password()
         hard_left = int(getattr(cfg, "proxy_hard_block_retries", 0) or 0) if cfg.proxy else 0
         rate_left = int(getattr(cfg, "proxy_rate_limit_retries", 0) or 0) if cfg.proxy else 0
+        ipv6_left = 3  # max IPv6 rotations before giving up
         while True:
             _raise_if_cancelled(stop)
             try:
@@ -1981,6 +2229,27 @@ def register_one(
                     cfg, email, password, lit, order_id, log, stop
                 )
                 break
+            except SignupError as exc:
+                msg = str(exc)
+                if "IPv6 exit IP" in msg:
+                    if ipv6_left <= 0:
+                        log("[!] IPv6 rotation exhausted — proceeding with current IP")
+                    else:
+                        ipv6_left -= 1
+                        log(f"[!] IPv6 detected — rotating to get IPv4 ({ipv6_left} left)")
+                        _rotate_sticky_proxy()
+                        _sleep_with_cancel(3, stop)
+                        continue
+                if "not in geoip database" in msg or "not found in database" in msg:
+                    if ipv6_left <= 0:
+                        log("[!] geoip rotation exhausted — proceeding anyway")
+                    else:
+                        ipv6_left -= 1
+                        log(f"[!] IP not in geoip database — rotating ({ipv6_left} left)")
+                        _rotate_sticky_proxy()
+                        _sleep_with_cancel(3, stop)
+                        continue
+                raise
             except SignupBlocked as exc:
                 if hard_left <= 0:
                     raise
@@ -1988,6 +2257,19 @@ def register_one(
                 log(f"[!] DataDome hard block ({exc}); rotating sticky proxy, {hard_left} retries left")
                 _rotate_sticky_proxy()
                 _sleep_with_cancel(5, stop)
+            except SignupError as exc:
+                # "Sorry, something went wrong" or repeated submit failures
+                # → rotate IP and retry (same as hard block treatment)
+                msg = str(exc).lower()
+                if "something went wrong" in msg or "stayed disabled" in msg:
+                    if hard_left <= 0:
+                        raise
+                    hard_left -= 1
+                    log(f"[!] submit failed ({str(exc)[:100]}); rotating IP, {hard_left} retries left")
+                    _rotate_sticky_proxy()
+                    _sleep_with_cancel(5, stop)
+                else:
+                    raise
             except GitHubRateLimited as exc:
                 if rate_left <= 0:
                     raise
