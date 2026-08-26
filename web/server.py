@@ -27,7 +27,7 @@ RECOVERY_DIR = ACCOUNTS_DIR / "recovery"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from github_register.config import Config, load_config
+from github_register.config import Config, load_config, save_config
 from github_register.litensi import LitensiClient, LitensiError
 from github_register.runner import run_job, silence_playwright_noise
 
@@ -197,9 +197,7 @@ class ConfigBody(BaseModel):
 
 
 def _save_config(cfg: Config) -> None:
-    (ROOT / "config.json").write_text(
-        json.dumps(asdict(cfg), indent=4, ensure_ascii=False), encoding="utf-8"
-    )
+    save_config(cfg, ROOT / "config.json")
 
 
 def _run_job(count: int) -> None:

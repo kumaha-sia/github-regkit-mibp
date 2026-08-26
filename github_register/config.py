@@ -2,8 +2,14 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, asdict
 from pathlib import Path
+
+from .crypto import encrypt, decrypt
+
+
+# Fields that are encrypted at rest in config.json
+SENSITIVE_FIELDS = {"litensi_api_id", "litensi_api_key", "proxy"}
 
 
 @dataclass
@@ -40,7 +46,12 @@ class Config:
     @classmethod
     def from_dict(cls, data: dict) -> "Config":
         known = set(cls.__dataclass_fields__)
-        return cls(**{k: v for k, v in data.items() if k in known})
+        d = {k: v for k, v in data.items() if k in known}
+        # decrypt sensitive fields
+        for field in SENSITIVE_FIELDS:
+            if field in d and isinstance(d[field], str):
+                d[field] = decrypt(d[field])
+        return cls(**d)
 
 
 def load_config(path: str | Path) -> Config:
@@ -51,3 +62,15 @@ def load_config(path: str | Path) -> Config:
         )
     data = json.loads(p.read_text(encoding="utf-8"))
     return Config.from_dict(data)
+
+
+def save_config(cfg: Config, path: str | Path) -> None:
+    """Save config to JSON, encrypting sensitive fields if encryption is enabled."""
+    p = Path(path)
+    d = asdict(cfg)
+    # encrypt sensitive fields
+    for field in SENSITIVE_FIELDS:
+        val = d.get(field, "")
+        if val and isinstance(val, str):
+            d[field] = encrypt(val)
+    p.write_text(json.dumps(d, indent=4, ensure_ascii=False), encoding="utf-8")
