@@ -85,17 +85,21 @@ class TempikClient:
 
     def wait_for_code(
         self,
-        address: str,
+        address: str = "",
         timeout: int = 180,
         poll_interval: float = 3.0,
         log: Optional[Callable[[str], None]] = None,
         cancel_cb: Optional[Callable[[], bool]] = None,
+        email: str = "",  # alias for address (LitensiClient compatibility)
     ) -> str:
         """Poll for GitHub verification code. Returns 8-digit code.
 
         Tempik has no minimum poll interval — emails arrive in D1 almost
         instantly via Cloudflare Email Routing.
         """
+        address = address or email or self._email or ""
+        if not address:
+            raise TempikError("no email address provided for wait_for_code")
         started = time.time()
         while time.time() - started < timeout:
             if cancel_cb and cancel_cb():
