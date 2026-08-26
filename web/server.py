@@ -687,6 +687,41 @@ async def api_accounts_delete_row(
     return {"ok": True, "deleted": len(lines) - len(kept), "remaining": len(kept)}
 
 
+@app.get("/api/metrics")
+async def api_metrics(
+    x_access_key: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    """Dashboard metrics: total accounts, success rate, breakdown."""
+    _require_auth(x_access_key)
+    files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
+    total_accounts = 0
+    total_2fa = 0
+    total_recovery = 0
+    daily: Dict[str, int] = {}
+    for f in files:
+        for row in _parse_accounts_file(f):
+            total_accounts += 1
+            if row.get("totp"):
+                total_2fa += 1
+            if row.get("has_recovery"):
+                total_recovery += 1
+            # group by date from filename: github_accounts_YYYYMMDD_HHMMSS.txt
+            date_str = f.name.replace("github_accounts_", "").split("_")[0]
+            if date_str and len(date_str) == 8:
+                date_key = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
+                daily[date_key] = daily.get(date_key, 0) + 1
+
+    return {
+        "ok": True,
+        "total_accounts": total_accounts,
+        "total_2fa": total_2fa,
+        "total_recovery": total_recovery,
+        "total_files": len(files),
+        "success_rate": round(total_2fa / total_accounts * 100, 1) if total_accounts else 0,
+        "daily": dict(sorted(daily.items())[-30:]),  # last 30 days
+    }
+
+
 @app.delete("/api/accounts/file")
 async def api_accounts_delete_file(
     x_access_key: Optional[str] = Header(None),
