@@ -799,17 +799,27 @@ def _homepage_warmup(page, log, stop=None, dwell: int = 12) -> bool:
     """
     log(f"[*] homepage warm-up ({dwell}s) — letting DataDome trust cookie settle")
     # retry homepage load up to 2 times on timeout (network may be slow)
+    page_loaded = False
     for load_attempt in range(2):
         try:
             page.goto("https://github.com/", wait_until="domcontentloaded", timeout=90_000)
+            page_loaded = True
             break
         except Exception as exc:
-            if "timeout" in str(exc).lower() and load_attempt == 0:
+            msg = str(exc).lower()
+            # NS_ERROR_ABORT / connection failures = proxy broken, NOT DataDome
+            if "ns_error_abort" in msg or "err_" in msg or "connection" in msg or "refused" in msg:
+                log(f"[!] proxy connection failed — cannot reach github.com ({exc})")
+                log("[!] check proxy credentials, port, or try a different sticky port")
+                raise SignupError(f"proxy connection failed: {exc}")
+            if "timeout" in msg and load_attempt == 0:
                 log(f"[!] homepage timeout — retrying ({exc})")
                 _sleep_with_cancel(3, stop)
                 continue
             log(f"[!] homepage goto failed: {exc}")
             return False
+    if not page_loaded:
+        return False
     if _is_hard_block(page):
         _log_block_ip(page, log)
         return False
@@ -1269,6 +1279,13 @@ def _browser_ctx_options(cfg: Config, log=None) -> dict:
                 # re-raise so the caller (register_one) can retry with a new IP
                 if "IPv6 exit IP" in str(exc) or "not in geoip database" in str(exc):
                     raise
+                # SSL/connection errors mean the proxy itself is broken — rotate
+                msg = str(exc).lower()
+                if "ssl" in msg or "wrong_version" in msg or "connection" in msg or "refused" in msg:
+                    if log:
+                        log(f"[!] proxy connection broken ({exc}) — rotating sticky port")
+                    _rotate_sticky_proxy()
+                    raise SignupError(f"proxy connection failed: {exc}")
                 opts["geoip"] = False
                 _last_exit_ip = None  # no IP to bind — do NOT restore stale cookies
                 if log:
