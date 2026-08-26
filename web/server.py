@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import hashlib
+import hmac
 import json
 import os
 import secrets
@@ -54,6 +55,27 @@ _migrate_legacy_account_files()
 
 _sessions: Dict[str, float] = {}
 _SESSION_TTL = 86400 * 7
+
+# Rate limiter for login attempts: max 5 attempts per 60s per IP
+_login_attempts: Dict[str, collections.deque] = {}
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SEC = 60
+
+
+def _check_login_rate_limit(client_ip: str) -> bool:
+    """Return True if request is allowed, False if rate-limited."""
+    now = time.time()
+    attempts = _login_attempts.get(client_ip)
+    if attempts is None:
+        attempts = collections.deque()
+        _login_attempts[client_ip] = attempts
+    # purge old entries
+    while attempts and attempts[0] < now - _LOGIN_WINDOW_SEC:
+        attempts.popleft()
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        return False
+    attempts.append(now)
+    return True
 
 _job_lock = threading.Lock()
 _job_thread: Optional[threading.Thread] = None
@@ -121,7 +143,8 @@ def _require_auth(x_access_key: Optional[str]) -> None:
     key = (x_access_key or "").strip()
     if not key:
         raise HTTPException(status_code=401, detail="access key required")
-    if key == ACCESS_PASSWORD:
+    # constant-time comparison to prevent timing attacks
+    if hmac.compare_digest(key, ACCESS_PASSWORD):
         return
     exp = _sessions.get(key)
     if exp and exp > time.time():
@@ -244,10 +267,17 @@ async def monitor_status() -> Dict[str, Any]:
 
 
 @app.post("/api/auth")
-async def api_auth(body: AuthBody) -> Dict[str, Any]:
+async def api_auth(body: AuthBody, request: Request) -> Dict[str, Any]:
     if not ACCESS_PASSWORD:
         return {"ok": True, "needs_auth": False, "token": ""}
-    if (body.password or "").strip() != ACCESS_PASSWORD:
+    client_ip = request.client.host if request.client else "unknown"
+    if not _check_login_rate_limit(client_ip):
+        return JSONResponse(
+            {"ok": False, "detail": "Too many login attempts. Please wait a minute."},
+            status_code=429,
+        )
+    # constant-time comparison
+    if not hmac.compare_digest((body.password or "").strip(), ACCESS_PASSWORD):
         return JSONResponse({"ok": False, "detail": "invalid password"}, status_code=403)
     return {"ok": True, "needs_auth": True, "token": _issue_token(body.password.strip())}
 
