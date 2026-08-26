@@ -38,6 +38,7 @@ mail_credentials.txt
 # === Browser profile (trust DataDome, data sensitif) ===
 .browser-profile/
 .datadome-trust.json
+.datadome-blacklist.json
 
 # === Playwright / rekaman step (bisa berisi nilai pribadi) ===
 .playwright-mcp
