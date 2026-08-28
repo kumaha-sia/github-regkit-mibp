@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import collections
-import hashlib
 import hmac
 import json
 import os
@@ -13,6 +12,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Deque, Dict, List, Optional
 
@@ -33,6 +33,8 @@ from github_register.litensi import LitensiClient, LitensiError
 from github_register.notifier import send_notification, format_job_message
 from github_register.validator import validate_account, validate_totp
 from github_register.runner import run_job, silence_playwright_noise
+from github_register.storage.legacy_txt import export_accounts_txt, import_accounts_dir
+from github_register.storage.sqlite import SqliteStorage
 
 silence_playwright_noise()  # hide TargetClosedError spam when browsers close
 
@@ -41,6 +43,7 @@ HOST = (os.getenv("GITHUB_REGISTER_HOST") or "127.0.0.1").strip()
 PORT = int(os.getenv("GITHUB_REGISTER_PORT") or "8093")  # 8092 is used by grok-regkit (Chromium)
 
 DIST = ROOT / "frontend" / "dist"
+DB_PATH = ACCOUNTS_DIR / "regkit.db"
 
 
 def _migrate_legacy_account_files() -> None:
@@ -53,6 +56,13 @@ def _migrate_legacy_account_files() -> None:
 
 
 _migrate_legacy_account_files()
+
+# single storage handle for the whole process (per-thread connections inside)
+_storage = SqliteStorage(DB_PATH)
+
+# one-shot legacy import: txt files -> SQLite. Idempotent (duplicates skipped),
+# so it is safe to run on every boot; it only adds rows it has never seen.
+import_accounts_dir(ACCOUNTS_DIR, _storage, log=lambda m: print(m, file=sys.stderr))
 
 _sessions: Dict[str, float] = {}
 _SESSION_TTL = 86400 * 7
@@ -95,24 +105,6 @@ _job_state: Dict[str, Any] = {
     "accounts_file": "",
     "accounts": [],  # per-account status: [{email, status: pending|running|done|failed, reason}]
 }
-_JOB_HISTORY_FILE = ACCOUNTS_DIR / "jobs.json"
-
-
-def _load_job_history() -> List[Dict[str, Any]]:
-    """Load job history for resume support."""
-    try:
-        if _JOB_HISTORY_FILE.is_file():
-            return json.loads(_JOB_HISTORY_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        pass
-    return []
-
-
-def _save_job_history(jobs: List[Dict[str, Any]]) -> None:
-    try:
-        _JOB_HISTORY_FILE.write_text(json.dumps(jobs, indent=2), encoding="utf-8")
-    except Exception:
-        pass
 
 app = FastAPI(title="GitHub Register", version="1.0.0")
 
@@ -494,15 +486,43 @@ async def api_logs_snapshot(
     return {"ok": True, "seq": seq, "lines": lines}
 
 
+def _account_row(a) -> Dict[str, Any]:
+    """API shape kept identical to the legacy file parser output.
+
+    `file`/`file_mtime` derive from the account's created_at so the
+    frontend's batch column keeps rendering without changes.
+    """
+    stamp = (a.created_at or "").replace("-", "").replace(":", "").replace(" ", "_")
+    batch = f"github_accounts_{stamp.split('_')[0]}_{stamp.split('_')[1][:6]}.txt" if "_" in stamp else "regkit.db"
+    from datetime import datetime as _dt
+
+    try:
+        mtime = _dt.strptime(a.created_at, "%Y-%m-%d %H:%M:%S").timestamp() if a.created_at else 0
+    except ValueError:
+        mtime = 0
+    return {
+        "email": a.email,
+        "password": a.password,
+        "username": a.username,
+        "totp": a.totp_secret,
+        "has_recovery": bool(a.recovery_codes),
+        "status": a.status,
+        "created_at": a.created_at,
+        "file": batch,
+        "file_mtime": mtime,
+    }
+
+
 @app.get("/api/accounts")
 async def api_accounts_list(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Account batches (legacy files + DB jobs share this listing)."""
     _require_auth(x_access_key)
     files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
     items = [
         {"name": f.name, "size": f.stat().st_size, "mtime": f.stat().st_mtime}
         for f in files[:50]
     ]
-    return {"ok": True, "files": items}
+    return {"ok": True, "files": items, "total_accounts": _storage.count()}
 
 
 def _read_accounts_file(path: Path) -> str:
@@ -512,53 +532,6 @@ def _read_accounts_file(path: Path) -> str:
         return decrypt(raw)
     return raw
 
-
-def _write_accounts_file(path: Path, content: str) -> None:
-    """Write an accounts file, encrypting if encryption is enabled."""
-    path.write_text(encrypt(content), encoding="utf-8")
-
-
-def _parse_accounts_file(path: Path) -> List[Dict[str, str]]:
-    """Parse account records, including whether a recovery file is available.
-
-    Unreadable/corrupt lines are skipped and reported on stderr instead of
-    silently discarding the whole file.
-    """
-    rows: List[Dict[str, str]] = []
-    try:
-        text = _read_accounts_file(path)
-    except Exception as exc:
-        print(f"[!] cannot read {path.name}: {exc}", file=sys.stderr)
-        return rows
-    for lineno, line in enumerate(text.splitlines(), 1):
-        line = line.strip()
-        if not line:
-            continue
-        parts = [p.strip() for p in line.split("----")]
-        if len(parts) >= 4:
-            rows.append({
-                "email": parts[0], "password": parts[1],
-                "username": parts[2], "totp": parts[3],
-                "has_recovery": _recovery_path(parts[0]).is_file(),
-            })
-        elif len(parts) == 3:
-            rows.append({
-                "email": parts[0], "password": parts[1],
-                "username": parts[2], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
-            })
-        elif len(parts) == 2:
-            rows.append({
-                "email": parts[0], "password": parts[1],
-                "username": parts[0].split("@")[0], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
-            })
-        else:
-            print(f"[!] {path.name}:{lineno}: malformed line skipped", file=sys.stderr)
-    return rows
-
-
-def _recovery_path(email: str) -> Path:
-    key = hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
-    return RECOVERY_DIR / f"{key}.txt"
 
 
 @app.get("/api/totp")
@@ -583,21 +556,21 @@ async def api_totp_code(
 async def api_accounts_preview(
     x_access_key: Optional[str] = Header(None),
     name: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(25, ge=1, le=200),
 ) -> Dict[str, Any]:
-    """Parsed account rows of one file (or the newest) for the export panel."""
+    """Account rows (newest first) for the export panel."""
     _require_auth(x_access_key)
-    if name:
-        safe = Path(name).name
-        path = ACCOUNTS_DIR / safe
-        if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
-            raise HTTPException(status_code=404, detail="file not found")
-    else:
-        files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            return {"ok": True, "rows": [], "total": 0, "name": ""}
-        path = files[0]
-    rows = _parse_accounts_file(path)
-    return {"ok": True, "rows": rows, "total": len(rows), "name": path.name}
+    result = _storage.list(page=page, per_page=per_page)
+    rows = [_account_row(a) for a in result.rows]
+    return {
+        "ok": True,
+        "rows": rows,
+        "total": result.total,
+        "name": (Path(name).name if name else "") or "regkit.db",
+        "page": result.page,
+        "pages": result.pages,
+    }
 
 
 @app.get("/api/accounts/all")
@@ -607,48 +580,17 @@ async def api_accounts_all(
     per_page: int = Query(25, ge=1, le=200),
     search: str = Query("", max_length=200),
     filter: str = Query("all", pattern="^(all|has2fa|no2fa|recovery)$"),
-    file: str = Query("", max_length=200),
 ) -> Dict[str, Any]:
-    """Aggregated accounts from all files (or one file) with pagination."""
+    """All accounts with pagination, search, and filter — served from SQLite."""
     _require_auth(x_access_key)
-    files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-
-    all_rows: List[Dict[str, Any]] = []
-    for f in files:
-        if file and f.name != file:
-            continue
-        mtime = f.stat().st_mtime
-        for row in _parse_accounts_file(f):
-            row["file"] = f.name
-            row["file_mtime"] = mtime
-            all_rows.append(row)
-
-    # filter
-    if filter == "has2fa":
-        all_rows = [r for r in all_rows if r.get("totp")]
-    elif filter == "no2fa":
-        all_rows = [r for r in all_rows if not r.get("totp")]
-    elif filter == "recovery":
-        all_rows = [r for r in all_rows if r.get("has_recovery")]
-
-    # search
-    if search.strip():
-        q = search.strip().lower()
-        all_rows = [r for r in all_rows if q in r.get("email", "").lower() or q in r.get("username", "").lower()]
-
-    total = len(all_rows)
-    pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, pages)
-    start = (page - 1) * per_page
-    rows = all_rows[start : start + per_page]
-
+    result = _storage.list(page=page, per_page=per_page, search=search, filter=filter)
     return {
         "ok": True,
-        "rows": rows,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "pages": pages,
+        "rows": [_account_row(a) for a in result.rows],
+        "total": result.total,
+        "page": result.page,
+        "per_page": result.per_page,
+        "pages": result.pages,
     }
 
 
@@ -659,42 +601,30 @@ async def api_accounts_recovery(
 ) -> Dict[str, Any]:
     """Read recovery codes for exactly one account, if they were captured."""
     _require_auth(x_access_key)
-    path = _recovery_path(email)
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="recovery codes are not available for this account")
-    try:
-        codes = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    except OSError as exc:
-        raise HTTPException(status_code=500, detail=f"unable to read recovery codes: {exc}")
+    account = _storage.get_by_email(email)
+    if account is None:
+        raise HTTPException(status_code=404, detail="account not found")
+    codes = [line.strip() for line in account.recovery_codes.splitlines() if line.strip()]
     if not codes:
-        raise HTTPException(status_code=404, detail="recovery code file is empty")
-    return {"ok": True, "email": email, "codes": codes}
+        raise HTTPException(status_code=404, detail="recovery codes are not available for this account")
+    return {"ok": True, "email": account.email, "codes": codes}
 
 
 class DeleteRowBody(BaseModel):
     email: str
-    name: str  # accounts file name
+    name: str = ""  # kept for frontend compat; deletion is DB-wide by email
 
 
 @app.delete("/api/accounts/row")
 async def api_accounts_delete_row(
     body: DeleteRowBody, x_access_key: Optional[str] = Header(None)
 ) -> Dict[str, Any]:
-    """Delete one account row (by email) from an accounts file."""
+    """Delete one account (by email) from the database."""
     _require_auth(x_access_key)
-    safe = Path(body.name).name
-    path = ACCOUNTS_DIR / safe
-    if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
-        raise HTTPException(status_code=404, detail="file not found")
-    lines = [l for l in _read_accounts_file(path).splitlines() if l.strip()]
-    kept = [l for l in lines if not l.strip().lower().startswith(body.email.strip().lower() + "----")]
-    if len(kept) == len(lines):
+    deleted = _storage.delete(body.email)
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"row not found: {body.email}")
-    _write_accounts_file(path, ("\n".join(kept) + "\n") if kept else "")
-    recovery = _recovery_path(body.email)
-    if recovery.is_file():
-        recovery.unlink()
-    return {"ok": True, "deleted": len(lines) - len(kept), "remaining": len(kept)}
+    return {"ok": True, "deleted": 1, "remaining": _storage.count()}
 
 
 @app.get("/api/metrics")
@@ -703,30 +633,16 @@ async def api_metrics(
 ) -> Dict[str, Any]:
     """Dashboard metrics: total accounts, success rate, breakdown."""
     _require_auth(x_access_key)
-    files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-    total_accounts = 0
-    total_2fa = 0
-    total_recovery = 0
-    daily: Dict[str, int] = {}
-    for f in files:
-        for row in _parse_accounts_file(f):
-            total_accounts += 1
-            if row.get("totp"):
-                total_2fa += 1
-            if row.get("has_recovery"):
-                total_recovery += 1
-            # group by date from filename: github_accounts_YYYYMMDD_HHMMSS.txt
-            date_str = f.name.replace("github_accounts_", "").split("_")[0]
-            if date_str and len(date_str) == 8:
-                date_key = f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:8]}"
-                daily[date_key] = daily.get(date_key, 0) + 1
-
+    total_accounts = _storage.count()
+    total_2fa = _storage.count("has2fa")
+    total_recovery = _storage.count("recovery")
+    daily = _storage.daily_counts(days=30)
     return {
         "ok": True,
         "total_accounts": total_accounts,
         "total_2fa": total_2fa,
         "total_recovery": total_recovery,
-        "total_files": len(files),
+        "total_files": 1,  # single source of truth now
         "success_rate": round(total_2fa / total_accounts * 100, 1) if total_accounts else 0,
         "daily": dict(sorted(daily.items())[-30:]),  # last 30 days
     }
@@ -737,7 +653,7 @@ async def api_accounts_delete_file(
     x_access_key: Optional[str] = Header(None),
     name: str = Query(...),
 ) -> Dict[str, Any]:
-    """Delete an entire accounts file."""
+    """Delete an entire legacy accounts file (DB rows stay authoritative)."""
     _require_auth(x_access_key)
     safe = Path(name).name
     path = ACCOUNTS_DIR / safe
@@ -767,24 +683,21 @@ async def api_validate_account(
 @app.get("/api/accounts/download")
 async def api_accounts_download(
     x_access_key: Optional[str] = Header(None),
-    name: Optional[str] = Query(None),
+    filter: str = Query("all", pattern="^(all|has2fa|no2fa|recovery)$"),
 ) -> Response:
+    """Export all accounts (optionally filtered) in the legacy txt format.
+
+    Generated on the fly from SQLite — the '----' file format is now an
+    export artifact, not the storage backend.
+    """
     _require_auth(x_access_key)
-    if name:
-        safe = Path(name).name
-        path = ACCOUNTS_DIR / safe
-        if not safe.startswith("github_accounts_") or not safe.endswith(".txt") or not path.is_file():
-            raise HTTPException(status_code=404, detail="file not found")
-    else:
-        files = sorted(ACCOUNTS_DIR.glob("github_accounts_*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)
-        if not files:
-            raise HTTPException(status_code=404, detail="no accounts file")
-        path = files[0]
-    return FileResponse(
-        path,
-        filename=path.name,
+    result = _storage.list(page=1, per_page=10_000, filter=filter)
+    text = export_accounts_txt(result.rows)
+    filename = f"github_accounts_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    return Response(
+        content=text,
         media_type="text/plain; charset=utf-8",
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

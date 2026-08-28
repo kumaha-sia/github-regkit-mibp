@@ -235,6 +235,8 @@ def test_daily_counts():
 
 
 if __name__ == "__main__":
+    # guarantee a clean crypto baseline no matter what the shell exported
+    _set_crypto_secret(None)
     for name, fn in sorted((n, f) for n, f in globals().items() if n.startswith("test_")):
         fn()
         print(f"[OK] {name}")
