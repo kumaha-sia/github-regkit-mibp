@@ -188,13 +188,14 @@ def _post_form_flow(
         )
         log(f"[*] verification code: {code}")
         _fill_launch_code(page, code, log)
-        # confirm the activation with Litensi: code was used (setstatus SUCCESS)
+        # confirm the activation: code was used (mark SUCCESS / no-op for tempik)
         try:
             delivered = mail.last_order_id or order_id
             mail.mark_success(delivered)
-            log(f"[*] litensi order {delivered} confirmed SUCCESS")
+            provider = getattr(cfg, "email_provider", "litensi") or "litensi"
+            log(f"[*] {provider} order {delivered} confirmed SUCCESS")
         except Exception as exc:
-            log(f"[i] litensi confirm SUCCESS failed: {exc}")
+            log(f"[i] confirm SUCCESS failed: {exc}")
         # after OTP: must reach a logged-in state
         state2 = _wait_post_submit(page, context, timeout=90, log=log, stop=stop)
         if state2 == "verify":
@@ -539,7 +540,6 @@ def run_job(
             log(f"[i] progress_cb error ignored: {exc}")
 
     ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = ACCOUNTS_DIR / f"github_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     storage = SqliteStorage(DB_PATH)
     proxy_health.init(storage)
     proxy_health.purge_expired()  # drop stale entries at job start
@@ -589,7 +589,7 @@ def run_job(
     job_error = ""
     ok = fail = 0
     log(f"[*] github-regkit | engine=Camoufox (Firefox anti-detect) | site={cfg.litensi_site} "
-        f"| headless={cfg.headless} | target={cfg.register_count} | output={out.name}")
+        f"| headless={cfg.headless} | target={cfg.register_count} | output=regkit.db")
     _emit_progress(ok, fail)  # initial snapshot: 0/0
     try:
         for i in range(1, cfg.register_count + 1):
@@ -616,12 +616,8 @@ def run_job(
                 record.job_id = job_id
                 try:
                     storage.add(record)  # single source of truth (encrypted columns)
-                    # dual-write the legacy txt for backward compat / manual export
-                    enc_line = encrypt(record.to_legacy_line())
-                    with out.open("a", encoding="utf-8") as f:
-                        f.write(enc_line + "\n")
                     ok += 1
-                    log(f"[+] {record.email} saved to {out.name}")
+                    log(f"[+] {record.email} saved to database")
                 except Exception as exc:
                     fail += 1
                     log(f"[!] save failed for {record.email}: {exc}")
@@ -647,4 +643,4 @@ def run_job(
             log(f"[i] job record finish failed: {exc}")
         log(f"[*] done: OK {ok} | FAIL {fail}")
         _emit_progress(ok, fail)  # final snapshot
-    return ok, fail, out
+    return ok, fail, Path(DB_PATH)

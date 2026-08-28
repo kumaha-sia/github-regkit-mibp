@@ -29,7 +29,7 @@ def test_finalize_account_runs_all_stages_once(monkeypatch=None):
     def fake_profile(page, username, cfg, log):
         calls.append("profile")
 
-    def fake_trust(context, log):
+    def fake_trust(context, exit_ip="", log=None):
         calls.append("trust")
 
     orig = {
@@ -154,10 +154,8 @@ def test_run_job_persists_to_sqlite(tmp_path=None):
         assert stored.totp_secret == "SECRET"
         assert stored.recovery_codes == "rc1\nrc2"
         assert stored.job_id == job.id
-        # legacy dual-write file exists too
-        from github_register.crypto import decrypt
-        content = out.read_text(encoding="utf-8")
-        assert "job@x.com" in decrypt(content) or "job@x.com" in content
+        # no legacy .txt file should be created — SQLite is the only store
+        assert not any(p.name.startswith("github_accounts_") for p in runner.ACCOUNTS_DIR.glob("github_accounts_*.txt"))
     finally:
         runner.register_one = orig
         runner._stop_proxy_bridge = orig_stop_bridge
