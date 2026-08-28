@@ -88,6 +88,7 @@ from .flow.verify import (
     try_login as _try_login,
     wait_post_submit as _wait_post_submit,
 )
+from . import proxy_health
 
 
 def silence_playwright_noise() -> None:
@@ -442,6 +443,10 @@ def register_one(
                         continue
                 raise
             except SignupBlocked as exc:
+                # blacklist the exit IP that got blocked
+                if _proxy_manager.exit_ip:
+                    proxy_health.add_to_blacklist(_proxy_manager.exit_ip)
+                    log(f"[!] exit IP {_proxy_manager.exit_ip} blacklisted")
                 if hard_left <= 0:
                     raise
                 hard_left -= 1
@@ -524,6 +529,8 @@ def run_job(
     ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
     out = ACCOUNTS_DIR / f"github_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     storage = SqliteStorage(DB_PATH)
+    proxy_health.init(storage)
+    proxy_health.purge_expired()  # drop stale entries at job start
     job_id = storage.create(JobRecord(target=cfg.register_count))
     if job_id_cb is not None:
         try:
