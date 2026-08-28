@@ -196,33 +196,34 @@ The reason is written to Live Log.
 
 ## Account Output
 
+Accounts are stored in a local SQLite database:
+
 ```text
 accounts/
-  github_accounts_<timestamp>.txt
+  regkit.db          # accounts, jobs, events (encrypted sensitive columns)
+  github_accounts_*.txt   # legacy export files (still written for compat)
   recovery/
     <email-hash>.txt
 ```
 
-Each account file contains one line per account:
+Sensitive fields (password, TOTP secret, recovery codes) are encrypted at
+rest with Fernet when `GITHUB_REGISTER_SECRET` is set; the database only
+holds `enc:`-prefixed ciphertext. The **Accounts** page can reveal and copy
+recovery codes with the **Recovery** action, and **Download** exports the
+classic one-line-per-account format on the fly:
 
 ```text
 email----password----username----totp_secret----has_recovery
 ```
 
-Recovery codes are stored separately under `accounts/recovery/`. The Accounts
-page can reveal and copy them with the **Recovery** action.
-
-Example account output:
-
-```text
-user@example.com----example-password----example-user----EXAMPLETOTPSECRET000
-```
-
-Generate a TOTP code manually from the fourth field:
+To migrate an existing `accounts/` directory into the database manually:
 
 ```bash
-python -c "import pyotp; print(pyotp.TOTP('EXAMPLETOTPSECRET000').now())"
+python -m github_register.migrate_accounts
 ```
+
+The import is idempotent (duplicates are skipped) and never deletes the
+legacy text files.
 
 ## Recording a Manual Flow
 
@@ -249,11 +250,20 @@ Its output can contain email addresses, session URLs, and selectors. Treat
 
 ## Security
 
-- Never commit `config.json`, `accounts/`, `.browser-profile/`,
-  `.datadome-trust.json`, recovery codes, or browser recordings.
-- Account files contain full credentials, including password and TOTP secret.
+- Never commit `config.json`, `accounts/` (including `regkit.db`),
+  `.browser-profile/`, `.datadome-trust.json`, recovery codes, or browser
+  recordings.
+- Set `GITHUB_REGISTER_SECRET` so credentials are encrypted at rest in both
+  `config.json` and the database; without it, values fall back to plaintext
+  with a warning.
+- The account database contains full credentials, including passwords and
+  TOTP secrets.
 - Recovery codes grant account recovery and should be stored securely.
 - Before pushing, inspect `git status --short` and `git diff --cached`.
+- Run the test suites after changes: `python -m tests.test_core`,
+  `python -m tests.test_storage`, `python -m tests.test_runner`,
+  `python -m tests.test_net`, `python -m tests.test_human`,
+  `python -m tests.test_api`.
 
 ## License
 
