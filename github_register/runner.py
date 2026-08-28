@@ -539,12 +539,17 @@ def run_job(
     storage = SqliteStorage(DB_PATH)
     proxy_health.init(storage)
     proxy_health.purge_expired()  # drop stale entries at job start
-    # proxy list mode: load URLs from file (preferred) or config field (fallback)
-    if getattr(cfg, "proxy_mode", "single") == "list":
+    # proxy handling: "none" = device IP, "single" = one URL, "list" = file
+    proxy_mode = getattr(cfg, "proxy_mode", "single")
+    if proxy_mode == "none":
+        _proxy_manager.set_proxy_list("")
+        _proxy_manager.proxy_url = ""
+        cfg.proxy = ""  # ensure browser_ctx_options skips proxy entirely
+        log("[*] proxy_mode=none — using device IP directly (no proxy)")
+    elif proxy_mode == "list":
         raw_proxies = ""
         source = ""
         proxy_file_path = getattr(cfg, "proxy_file", "proxies.txt") or ""
-        # try the configured file path (relative to ROOT or absolute)
         candidates = []
         if proxy_file_path:
             p = Path(proxy_file_path)
@@ -557,7 +562,6 @@ def run_job(
                 except Exception as exc:
                     log(f"[!] cannot read proxy file {cand}: {exc}")
                 break
-        # fallback to config.proxy_list inline string
         if not raw_proxies.strip():
             raw_proxies = cfg.proxy_list or ""
             source = "config.json proxy_list"

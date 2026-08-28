@@ -19,7 +19,8 @@ const FIELDS = [
   { key: 'register_count', label: 'Register Count', type: 'number', group: 'Registration' },
   { key: 'proxy_mode', label: 'Proxy Mode', group: 'Registration', type: 'select', options: [
     { value: 'single', label: 'Single proxy (one URL, DataImpulse sticky rotation)' },
-    { value: 'list', label: 'Proxy list (multiple URLs, sequential per account)' },
+    { value: 'list', label: 'Proxy list (file, sequential per account)' },
+    { value: 'none', label: 'No proxy (use device IP directly)' },
   ], wide: true },
   { key: 'proxy', label: 'Proxy (http://user:pass@host:port)', secret: true, group: 'Registration', wide: true, showIf: { proxy_mode: 'single' } },
   { key: 'proxy_file', label: 'Proxy file path', group: 'Registration', wide: true, showIf: { proxy_mode: 'list' } },
