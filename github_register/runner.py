@@ -165,6 +165,10 @@ def _cancel_order(mail, order_id: str, log) -> None:
             log(f"[!] cancel order failed: {exc}")
 
 
+def _post_form_flow(
+    page, context, cfg: Config, email: str, password: str, username: str,
+    mail, order_id: str, log, stop,
+) -> tuple[str, str, str]:
     """Everything AFTER the signup form was accepted: email verification
     (launch code), auto-login, first repository (stage 4), TOTP 2FA (stage 5).
     Returns (username, totp_secret, recovery_codes)."""
