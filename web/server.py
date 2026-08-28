@@ -34,6 +34,7 @@ from github_register.notifier import send_notification, format_job_message
 from github_register.validator import validate_account, validate_totp
 from github_register.runner import run_job, silence_playwright_noise
 from github_register.storage.legacy_txt import export_accounts_txt, import_accounts_dir
+from github_register.storage.models import JobEvent
 from github_register.storage.sqlite import SqliteStorage
 
 silence_playwright_noise()  # hide TargetClosedError spam when browsers close
@@ -120,6 +121,9 @@ class StopController:
         self._stop = True
 
 
+_current_job_id: Optional[int] = None  # job whose events _append_log persists
+
+
 def _append_log(message: str) -> None:
     global _log_seq
     line = f"[{time.strftime('%H:%M:%S')}] {message}"
@@ -127,6 +131,18 @@ def _append_log(message: str) -> None:
         _log_buffer.append(line)
         _log_seq += 1
         _log_cond.notify_all()
+    # persist into the running job's event stream; failures must never
+    # break the job thread's logging path
+    if _current_job_id is not None:
+        try:
+            _storage.add_event(JobEvent(
+                job_id=_current_job_id,
+                ts=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                message=message,
+                level="info",
+            ))
+        except Exception:
+            pass
 
 
 def _mask_value(key: str, value: Any) -> Any:
@@ -220,7 +236,7 @@ def _save_config(cfg: Config) -> None:
 
 
 def _run_job(count: int) -> None:
-    global _controller
+    global _controller, _current_job_id
     controller = StopController()
     with _job_lock:
         _controller = controller
@@ -241,6 +257,11 @@ def _run_job(count: int) -> None:
             _job_state["success"] = int(ok_count)
             _job_state["fail"] = int(fail_count)
 
+    def _on_job_id(job_id: int) -> None:
+        # bind _append_log's persistence to this job's event stream
+        global _current_job_id
+        _current_job_id = job_id
+
     try:
         cfg = load_config(ROOT / "config.json")
         cfg.register_count = count
@@ -249,6 +270,7 @@ def _run_job(count: int) -> None:
             cancel_cb=controller.should_stop,
             log=_append_log,
             progress_cb=_on_progress,
+            job_id_cb=_on_job_id,
         )
         with _job_lock:
             _job_state.update(success=ok, fail=fail, accounts_file=str(out))
@@ -265,6 +287,8 @@ def _run_job(count: int) -> None:
         with _job_lock:
             _job_state["error"] = str(exc)
     finally:
+        global _current_job_id
+        _current_job_id = None
         with _job_lock:
             _job_state["running"] = False
             _job_state["finished_at"] = time.time()
@@ -484,6 +508,39 @@ async def api_logs_snapshot(
         lines = list(_log_buffer)[-limit:]
         seq = _log_seq
     return {"ok": True, "seq": seq, "lines": lines}
+
+
+@app.get("/api/logs/history")
+async def api_logs_history(
+    x_access_key: Optional[str] = Header(None),
+    job_id: Optional[int] = Query(None, ge=1),
+    after: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=5000),
+) -> Dict[str, Any]:
+    """Persistent log events from the database (survives restarts).
+
+    Without job_id: the most recent job is used. `after` enables streaming
+    continuation by event id.
+    """
+    _require_auth(x_access_key)
+    try:
+        if job_id is None:
+            latest = _storage.latest()
+            if latest is None:
+                return {"ok": True, "job_id": None, "events": [], "total": 0}
+            job_id = latest.id
+        events = _storage.events_after(job_id, after_id=after, limit=limit)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "events": [
+                {"id": e.id, "ts": e.ts, "level": e.level, "message": e.message}
+                for e in events
+            ],
+            "total": len(events),
+        }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"cannot read job events: {exc}")
 
 
 def _account_row(a) -> Dict[str, Any]:

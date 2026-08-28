@@ -124,6 +124,52 @@ def test_download_export_format():
     assert "attachment" in r.headers.get("content-disposition", "")
 
 
+def test_logs_history_endpoint():
+    _reset()
+    from github_register.storage.models import Job, JobEvent
+
+    jid = server._storage.create(Job(target=1))
+    server._storage.add_event(JobEvent(job_id=jid, ts="2026-08-28 10:00:00", message="start"))
+    server._storage.add_event(JobEvent(job_id=jid, ts="2026-08-28 10:00:05", message="mid", level="warn"))
+    server._storage.finish(jid, ok=1, fail=0, status="done")
+
+    # latest job by default
+    r = client.get("/api/logs/history").json()
+    assert r["ok"] is True and r["job_id"] == jid
+    assert [e["message"] for e in r["events"]] == ["start", "mid"]
+    assert r["events"][0]["level"] == "info"
+
+    # after= continues from the given event id
+    first_id = r["events"][0]["id"]
+    r2 = client.get(f"/api/logs/history?after={first_id}").json()
+    assert [e["message"] for e in r2["events"]] == ["mid"]
+
+    # explicit job_id with no events
+    empty = client.get("/api/logs/history?job_id=99999").json()
+    assert empty["ok"] is True and empty["events"] == []
+
+
+def test_append_log_persists_to_running_job():
+    _reset()
+    from github_register.storage.models import Job
+
+    jid = server._storage.create(Job(target=1))
+    server._current_job_id = jid
+    try:
+        server._append_log("hello persistent log")
+    finally:
+        server._current_job_id = None
+    # buffer got the line...
+    assert any("hello persistent log" in line for line in server._log_buffer)
+    # ...and the DB got it too
+    events = server._storage.events_after(jid)
+    assert any(e.message == "hello persistent log" for e in events)
+    # with no active job, _append_log must not raise nor write
+    before = len(server._storage.events_after(jid))
+    server._append_log("orphan line")
+    assert len(server._storage.events_after(jid)) == before
+
+
 def test_config_roundtrip():
     r = client.get("/api/config")
     assert r.status_code == 200

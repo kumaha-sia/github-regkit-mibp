@@ -872,12 +872,16 @@ def run_job(
     cancel_cb: Optional[Callable[[], bool]] = None,
     log: Optional[Callable[[str], None]] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
+    job_id_cb: Optional[Callable[[int], None]] = None,
 ) -> tuple[int, int, Path]:
     """Register `register_count` accounts; returns (ok, fail, output_file).
 
     `progress_cb(ok, fail)` (optional) is invoked after each account attempt so
     external observers (e.g. the web UI) can render live stats instead of only
     seeing the final totals when the job returns.
+
+    `job_id_cb(job_id)` (optional) is invoked once with the persistent job row
+    id right after it is created, so observers can attach events to the job.
     """
     if log is None:
         log = lambda msg: print(f"[{_now()}] {msg}")  # noqa: E731
@@ -896,6 +900,11 @@ def run_job(
     out = ACCOUNTS_DIR / f"github_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     storage = SqliteStorage(DB_PATH)
     job_id = storage.create(JobRecord(target=cfg.register_count))
+    if job_id_cb is not None:
+        try:
+            job_id_cb(job_id)
+        except Exception as exc:
+            log(f"[i] job_id_cb error ignored: {exc}")
     job_error = ""
     ok = fail = 0
     log(f"[*] github-regkit | engine=Camoufox (Firefox anti-detect) | site={cfg.litensi_site} "

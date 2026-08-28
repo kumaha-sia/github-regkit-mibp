@@ -85,6 +85,41 @@ def test_finalize_account_runs_all_stages_once(monkeypatch=None):
         runner._save_trust_cookie = orig["trust"]
 
 
+def test_run_job_reports_job_id(tmp_path=None):
+    """job_id_cb must fire with the persistent job row id before accounts run."""
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp()) / "jobtest"
+    tmp.mkdir(parents=True)
+    runner.ACCOUNTS_DIR = tmp
+    runner.DB_PATH = tmp / "regkit.db"
+    runner.RECOVERY_DIR = tmp / "recovery"
+
+    def fake_register_one(cfg, log, stop=None):
+        seen["in_account"] = True
+        return Account(email="jid@x.com", username="jiduser", password="pw")
+
+    seen = {}
+    orig = runner.register_one
+    orig_stop_bridge = runner._stop_proxy_bridge
+    runner.register_one = fake_register_one
+    runner._stop_proxy_bridge = lambda: None
+    try:
+        cfg = Config(register_count=1, delay_sec=0)
+        ids = []
+        ok, fail, out = runner.run_job(
+            cfg, log=lambda m: None, job_id_cb=ids.append
+        )
+        assert ids and ids[0] > 0, "job_id_cb must fire with a positive id"
+        storage = SqliteStorage(runner.DB_PATH)
+        job = storage.latest()
+        assert job.id == ids[0]
+        assert seen.get("in_account") is True
+    finally:
+        runner.register_one = orig
+        runner._stop_proxy_bridge = orig_stop_bridge
+
+
 def test_run_job_persists_to_sqlite(tmp_path=None):
     """run_job must write each successful registration into SQLite with a Job row."""
     import tempfile
