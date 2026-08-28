@@ -67,6 +67,9 @@ class Config:
     # CodeBuddy router (external OAuth device-code service)
     router_url: str = ""    # e.g. https://router.example.com/api; blank = disabled
     router_password: str = ""
+    # CodeBuddy registration
+    codebuddy_enabled: bool = False
+    codebuddy_region: str = ""  # blank = auto-detect from Current Region on the page
     # scheduled jobs (cron-like)
     schedule_cron: str = ""          # cron expression, e.g. "0 9 * * *" = daily 9am
     schedule_count: int = 0          # accounts per scheduled run; 0 = disabled

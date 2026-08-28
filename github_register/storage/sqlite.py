@@ -81,6 +81,16 @@ CREATE TABLE IF NOT EXISTS trust_cookies (
     payload  TEXT NOT NULL,
     saved_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS codebuddy_accounts (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id    INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    connection_id INTEGER,
+    region        TEXT NOT NULL DEFAULT '',
+    status        TEXT NOT NULL DEFAULT 'active',
+    created_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cb_account ON codebuddy_accounts(account_id);
 """
 
 # Columns that must be encrypted before touching the database.
@@ -400,3 +410,56 @@ class SqliteStorage:
             "SELECT exit_ip, payload FROM trust_cookies WHERE id = 1"
         ).fetchone()
         return (row["exit_ip"], row["payload"]) if row else None
+
+    # ------------------------------------------------- codebuddy accounts
+
+    def get_next_for_codebuddy(self) -> Optional[Account]:
+        """Pick the next active GitHub account not yet registered on CodeBuddy."""
+        row = self._conn().execute(
+            "SELECT a.* FROM accounts a "
+            "LEFT JOIN codebuddy_accounts ca ON ca.account_id = a.id "
+            "WHERE a.status = 'active' AND ca.id IS NULL "
+            "ORDER BY a.id LIMIT 1"
+        ).fetchone()
+        return self._row_to_account(row) if row else None
+
+    def add_codebuddy_account(
+        self, account_id: int, connection_id: int, region: str = ""
+    ) -> int:
+        conn = self._conn()
+        with conn:
+            cur = conn.execute(
+                "INSERT INTO codebuddy_accounts "
+                "(account_id, connection_id, region, status, created_at)"
+                " VALUES (?, ?, ?, 'active', ?)",
+                (account_id, connection_id, region, _now()),
+            )
+            return int(cur.lastrowid)
+
+    def list_codebuddy_accounts(self) -> list[dict]:
+        """List all CodeBuddy-registered accounts with GitHub details."""
+        rows = self._conn().execute(
+            "SELECT ca.id, ca.account_id, ca.connection_id, ca.region, ca.status,"
+            " ca.created_at, a.email, a.username"
+            " FROM codebuddy_accounts ca"
+            " JOIN accounts a ON a.id = ca.account_id"
+            " ORDER BY ca.id DESC"
+        ).fetchall()
+        return [
+            {
+                "id": r["id"],
+                "account_id": r["account_id"],
+                "connection_id": r["connection_id"],
+                "region": r["region"],
+                "status": r["status"],
+                "created_at": r["created_at"],
+                "email": r["email"],
+                "username": r["username"],
+            }
+            for r in rows
+        ]
+
+    def count_codebuddy(self) -> int:
+        return int(
+            self._conn().execute("SELECT COUNT(*) FROM codebuddy_accounts").fetchone()[0]
+        )
