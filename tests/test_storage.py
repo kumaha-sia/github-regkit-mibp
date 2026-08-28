@@ -5,6 +5,7 @@ import os
 import sqlite3
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -158,7 +159,14 @@ def test_trust_and_blacklist():
     assert s.blacklist_contains("9.9.9.9") is False
     s.blacklist_add("9.9.9.9")
     assert s.blacklist_contains("9.9.9.9") is True
-    s.blacklist_purge_expired(ttl_sec=0)
+    # force-expire by backdating the timestamp, then purge with a long ttl
+    conn = s._conn()
+    with conn:
+        conn.execute(
+            "UPDATE proxy_blacklist SET blocked_at = ? WHERE ip = '9.9.9.9'",
+            (time.time() - 10_000,),
+        )
+    s.blacklist_purge_expired(ttl_sec=3600)
     assert s.blacklist_contains("9.9.9.9") is False
 
 

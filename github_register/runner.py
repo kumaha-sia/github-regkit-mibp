@@ -11,15 +11,12 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from camoufox.sync_api import Camoufox
-import requests
 
 from .config import Config
 from .litensi import LitensiClient, LitensiError
-from .tempik import TempikClient, TempikError
+from .tempik import TempikClient
 from .profiles import (
     generate_password,
-    generate_username,
-    parse_public_profile,
     username_from_email,
 )
 from .storage.models import Account as AccountRecord, Job as JobRecord
@@ -31,9 +28,7 @@ from .errors import (
     SignupBlocked,
     SignupError,
 )
-from .net.bridge import LocalAuthProxyBridge
 from .net.proxy import (
-    ProxyError,
     ProxyManager,
     parse_proxy as _parse_proxy,
     proxy_is_socks as _proxy_is_socks,
@@ -42,7 +37,6 @@ from .net.proxy import (
     validate_geoip as _validate_geoip,
 )
 from .browser.human import (
-    human_click as _human_click,
     human_delay as _human_delay,
     human_fill as _human_fill,
     human_mouse_to_element as _human_mouse_to_element,
@@ -53,8 +47,27 @@ from .browser.human import (
     fill as _fill,
     raise_if_cancelled as _raise_if_cancelled,
     sleep_with_cancel as _sleep_with_cancel,
-    wait_step as _wait_step,
 )
+from .browser.selectors import (
+    EMAIL_INPUTS as _EMAIL_INPUTS,
+    LOGIN_PASS_INPUTS as _LOGIN_PASS_INPUTS,
+    OTP_INPUTS as _OTP_INPUTS,
+    PASSWORD_INPUTS as _PASSWORD_INPUTS,
+    SUBMIT_SELECTORS as _SUBMIT_SELECTORS,
+    USERNAME_INPUTS as _USERNAME_INPUTS,
+    VALIDATION_ALERTS as _VALIDATION_ALERTS,
+)
+from .detection.datadome import (
+    challenge_hint as _challenge_hint,
+    is_hard_block as _is_hard_block,
+    log_block_ip as _log_block_ip,
+    raise_if_rate_limited as _raise_if_rate_limited,
+    reject_blocked as _reject_blocked,
+    try_click_datadome as _try_click_datadome,
+)
+from .flow.repo import create_repository as _create_repository
+from .flow.twofa import enable_2fa as _enable_2fa
+from .flow.profile import complete_profile as _complete_profile
 
 
 def silence_playwright_noise() -> None:
@@ -94,10 +107,6 @@ def _get_bridge(proxy_url: str, log=None) -> Optional[dict]:
     return _proxy_manager.ensure_bridge(proxy_url)
 
 
-def _resolve_exit_ip(proxy_url: str) -> str:
-    return _proxy_manager.resolve_exit_ip(proxy_url)
-
-
 def _save_recovery_per_account(email: str, recovery: str, log) -> None:
     """Store one account's multiline recovery codes in accounts/recovery/.
 
@@ -114,38 +123,7 @@ def _save_recovery_per_account(email: str, recovery: str, log) -> None:
     except Exception as exc:
         log(f"[i] recovery codes write failed: {exc}")
 
-_EMAIL_INPUTS = ["#email", "input[name='email']", "input[type='email']"]
-_PASSWORD_INPUTS = ["#password", "input[name='password']"]
-_USERNAME_INPUTS = ["#login", "input[name='login']"]
-_OTP_INPUTS = [
-    "#otp",
-    "input[name='otp']",
-    "input[autocomplete='one-time-code']",
-    "#launch-code-0",  # verify page: 8 single-digit boxes launch-code-0..7
-]
-# The main signup form (NOT the Google/Apple OAuth forms which live in their own <form> tags)
-_SIGNUP_FORM = "form[action*='signup']"
-_SUBMIT_SELECTORS = [f"{_SIGNUP_FORM} button[type='submit']", "#submit", "button[type='submit']"]
-
-
-
-_DATADOME_HARD_BLOCK_MARKERS = (
-    "access is temporarily restricted",
-    "we detected unusual activity",
-    "your access is restricted",
-    "you have been temporarily blocked",
-    # Indonesian localization of the DataDome block page
-    "akses dibatasi untuk sementara",
-    "kami mendeteksi aktivitas yang tidak biasa",
-    "ada robot di jaringan",
-)
-
-_RATE_LIMIT_MARKERS = (
-    "secondary rate limit",
-    "too many requests",
-    "you have exceeded a secondary rate limit",
-    "please wait a few minutes before you try again",
-)
+_LOGIN_USER_INPUTS = ["#login_field", "input[name='login']", "input[type='text']"]
 
 
 def _now() -> str:
@@ -155,7 +133,7 @@ def _now() -> str:
 def _form_validation_hint(page) -> str:
     """Return a concise visible validation error when Create account is disabled."""
     try:
-        alerts = page.locator("[role='alert'], .is-error, .error, .flash-error").all()
+        alerts = page.locator(_VALIDATION_ALERTS).all()
         messages = []
         for alert in alerts:
             try:
@@ -188,14 +166,6 @@ def _click_submit(page) -> None:
     _first(page, _SUBMIT_SELECTORS, visible=True).click()
 
 
-def _reject_blocked(page) -> None:
-    """GitHub risk engine may force a 'Login to continue' device interstitial."""
-    text = _page_text(page).lower()
-    for marker in ("login to continue", "log in with a different device"):
-        if marker in text:
-            raise SignupBlocked(f"github risk check: {marker}")
-
-
 def _cancel_order(mail, order_id: str, log) -> None:
     """Cancel a mailbox order. No-op for Tempik (inbox lives until session expires)."""
     if isinstance(mail, TempikClient):
@@ -208,103 +178,6 @@ def _cancel_order(mail, order_id: str, log) -> None:
             log(f"[i] litensi order {order_id} auto-expires (cancel only allowed after 4 min)")
         else:
             log(f"[!] cancel order failed: {exc}")
-
-
-def _is_hard_block(page) -> bool:
-    """DataDome hard block: 'Access is temporarily restricted' — no checkbox to solve."""
-    text = ""
-    try:
-        text = _page_text(page).lower()
-    except Exception:
-        pass
-    return any(marker in text for marker in _DATADOME_HARD_BLOCK_MARKERS)
-
-
-def _log_block_ip(page, log) -> None:
-    """When a hard block is detected, log the blocked IP and current proxy exit IP.
-
-    DataDome pages often include the blocked IP in the page text or URL.
-    This helps diagnose whether the proxy is leaking the real IP.
-    """
-    import re
-
-    blocked_ip = ""
-    try:
-        text = _page_text(page)[:2000]
-        m = re.search(r"IP[:\s]+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", text)
-        if m:
-            blocked_ip = m.group(1)
-    except Exception:
-        pass
-    if not blocked_ip:
-        try:
-            m = re.search(r"IP[:\s]+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})", page.url or "")
-            if m:
-                blocked_ip = m.group(1)
-        except Exception:
-            pass
-    proxy_ip = _proxy_manager.exit_ip or "(unknown — proxy exit IP not resolved)"
-    if blocked_ip:
-        log(f"[!] DataDome blocked IP: {blocked_ip} | proxy exit IP: {proxy_ip}")
-        if blocked_ip == proxy_ip:
-            log("[i] blocked IP matches proxy exit — proxy is active but this IP is flagged")
-        elif proxy_ip and proxy_ip != "(unknown)":
-            log("[!] BLOCKED IP != PROXY EXIT — proxy may be leaking! Check proxy config")
-        else:
-            log("[!] blocked IP looks like your real IP — proxy is NOT active")
-    else:
-        log(f"[!] DataDome hard block detected | proxy exit IP: {proxy_ip}")
-
-
-def _raise_if_rate_limited(page) -> None:
-    text = _page_text(page).lower()
-    if any(marker in text for marker in _RATE_LIMIT_MARKERS):
-        raise GitHubRateLimited(
-            "GitHub secondary rate limit reached. Stop the job and wait before trying again; "
-            "do not rotate/retry this limit."
-        )
-
-
-def _challenge_hint(page) -> str:
-    """Return a short description of the anti-bot page GitHub served, or ''."""
-    if "captcha-delivery" in page.url:
-        return "DataDome challenge (geo.captcha-delivery.com)"
-    try:
-        html = page.content()[:2000]
-    except Exception:
-        html = ""
-    if "captcha-delivery" in html or "id=\"cmsg\"" in html:
-        return "DataDome challenge page"
-    if "cf-chl" in html:
-        return "Cloudflare challenge"
-    return ""
-
-
-def _try_click_datadome(page, log) -> None:
-    """Best-effort click on the DataDome checkbox iframe (headed mode)."""
-    try:
-        for frame in page.frames:
-            if "captcha-delivery" in (frame.url or ""):
-                for sel in (
-                    "#ddv1-test-tracking",
-                    "input[type='checkbox']",
-                    "[id*='checkbox']",
-                    "label",
-                ):
-                    loc = frame.locator(sel).first
-                    if loc.count() and loc.is_visible():
-                        loc.click(timeout=3000)
-                        log("[*] clicked DataDome checkbox")
-                        return
-                # no checkbox: click somewhere in the challenge frame to trigger it
-                try:
-                    frame.locator("body").click(timeout=3000)
-                    log("[*] poked DataDome challenge frame")
-                except Exception:
-                    pass
-                return
-    except Exception:
-        pass
 
 
 def _form_ready(page) -> bool:
@@ -346,7 +219,7 @@ def _homepage_warmup(page, log, stop=None, dwell: int = 12) -> bool:
     if not page_loaded:
         return False
     if _is_hard_block(page):
-        _log_block_ip(page, log)
+        _log_block_ip(page, log, exit_ip=_proxy_manager.exit_ip or "")
         return False
 
     # simulate human browsing: mouse movement, scrolling, reading pauses
@@ -368,7 +241,7 @@ def _homepage_warmup(page, log, stop=None, dwell: int = 12) -> bool:
         # variable sleep (not fixed 1s)
         _human_delay(1.0, 0.3, stop)
         if _is_hard_block(page):
-            _log_block_ip(page, log)
+            _log_block_ip(page, log, exit_ip=_proxy_manager.exit_ip or "")
             return False
     log("[*] homepage warm-up complete")
     return True
@@ -388,7 +261,7 @@ def _open_signup(page, log, attempts: int = 3, stop=None) -> None:
 
     # --- Phase 1: homepage warm-up before first /signup attempt ---
     if not _homepage_warmup(page, log, stop=stop, dwell=12):
-        _log_block_ip(page, log)
+        _log_block_ip(page, log, exit_ip=_proxy_manager.exit_ip or "")
         raise SignupBlocked(
             "DataDome HARD BLOCK on homepage warm-up — this IP is blocked. "
             "Change IP, disable VPN/WARP, or configure a residential proxy."
@@ -418,14 +291,14 @@ def _open_signup(page, log, attempts: int = 3, stop=None) -> None:
             _raise_if_cancelled(stop)
             _raise_if_rate_limited(page)
             if _is_hard_block(page):
-                _log_block_ip(page, log)
+                _log_block_ip(page, log, exit_ip=_proxy_manager.exit_ip or "")
                 # Phase 2: longer warm-up retry on hard block
                 if attempt < attempts:
                     log("[!] hard block on /signup — trying longer homepage warm-up (20s)")
                     if _homepage_warmup(page, log, stop=stop, dwell=20):
                         break  # warm-up OK, retry /signup in next attempt
                     else:
-                        _log_block_ip(page, log)
+                        _log_block_ip(page, log, exit_ip=_proxy_manager.exit_ip or "")
                         raise SignupBlocked(
                             "DataDome HARD BLOCK persists after warm-up — IP is flagged. "
                             "Change IP or proxy provider."
@@ -974,7 +847,6 @@ def _fill_launch_code(page, code: str, log) -> None:
 
 
 _LOGIN_INPUTS = ["#login_field", "input[name='login']", "input#login"]
-_LOGIN_PASS_INPUTS = ["#password", "input[name='password']", "input[type='password']"]
 
 
 def _try_login(page, username: str, password: str, context, log) -> bool:
@@ -1013,553 +885,6 @@ def _try_login(page, username: str, password: str, context, log) -> bool:
             return True
         time.sleep(1.5)
     return False
-
-
-def _create_repository(page, username: str, base_name: str, log) -> str:
-    """Stage 4 (user recording): create the first repository on /new.
-
-    The name field auto-generates a suggestion; we type our own name and submit.
-    Returns the repository name created.
-    """
-    def _submit() -> None:
-        """Submit the visible enabled repo form without clicking an overlay."""
-        btn = page.get_by_role("button", name="Create repository").first
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            try:
-                if btn.count() and btn.is_visible() and btn.is_enabled():
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-        else:
-            raise SignupError("Create repository stayed disabled after validation wait")
-
-        try:
-            btn.click(timeout=10_000)
-            log("[*] 'Create repository' clicked")
-            return
-        except Exception as exc:
-            log(f"[i] repository native click intercepted ({exc}); trying DOM click")
-
-        clicked = bool(page.evaluate(
-            """() => {
-                const buttons = [...document.querySelectorAll('button')];
-                const button = buttons.find((b) =>
-                    b.offsetParent !== null && !b.disabled &&
-                    (b.textContent || '').trim() === 'Create repository'
-                );
-                if (!button) return false;
-                button.click();
-                return true;
-            }"""
-        ))
-        if not clicked:
-            raise SignupError("Create repository button was not visible/enabled for DOM click")
-        log("[*] 'Create repository' clicked via DOM (overlay bypassed)")
-
-    name = base_name or "hello"
-    page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
-    # try multiple selectors — GitHub may have changed the repo name input
-    repo_selectors = [
-        "#repository-name-input",
-        "input[name='repository[name]']",
-        "input[aria-label='Repository name']",
-        "input[placeholder*='repository' i]",
-        "input[placeholder*='repo' i]",
-        "input[data-testid='repository-name-input']",
-    ]
-    inp = None
-    for sel in repo_selectors:
-        try:
-            loc = page.locator(sel).first
-            if loc.count() and loc.is_visible():
-                inp = loc
-                log(f"[*] repo name input found: {sel}")
-                break
-        except Exception:
-            continue
-    if inp is None:
-        # last resort: wait for any text input on the page
-        try:
-            page.wait_for_selector("input[type='text']", state="visible", timeout=15_000)
-            inp = page.locator("input[type='text']").first
-            log("[*] repo name input found via fallback: input[type='text']")
-        except Exception:
-            raise SignupError(f"repo form not found; url={page.url} body={_page_text(page)[:300]!r}")
-    inp.fill(name)
-    time.sleep(1.5)  # let GitHub validate + enable the submit button
-    try:
-        _submit()
-    except Exception as exc:
-        raise SignupError(f"cannot click 'Create repository': {exc}")
-    # success = redirected to /<username>/<repo>
-    deadline = time.time() + 30
-    while time.time() < deadline:
-        url = page.url or ""
-        if "/new" not in url and f"/{username}/" in url:
-            log(f"[*] repository created: {url}")
-            return name
-        # name conflict? GitHub shows an error — retry with a numeric suffix
-        err = ""
-        try:
-            err = _page_text(page)[:600].lower()
-        except Exception:
-            pass
-        if "already exists" in err and "/new" in url:
-            log(f"[*] repo {name} exists, retry with suffix")
-            name = f"{base_name}{int(time.time()) % 10000}"
-            page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_selector("#repository-name-input", state="visible", timeout=20_000)
-            page.locator("#repository-name-input").first.fill(name)
-            time.sleep(1.5)
-            _submit()
-        time.sleep(1)
-    raise SignupError(f"repository creation not confirmed; url={page.url}")
-
-
-def _fetch_public_profile() -> dict[str, str]:
-    """Fetch one display identity and one quote without using their credentials."""
-    random_user = requests.get("https://randomuser.me/api/", timeout=15).json()
-    quote = requests.get("https://zenquotes.io/api/random", timeout=15).json()
-    return parse_public_profile(random_user, quote)
-
-
-def _visible_dom_click(page, matcher_js: str) -> bool:
-    """Click a visible enabled button through DOM when overlays eat pointer input."""
-    return bool(page.evaluate(
-        f"""() => {{
-            const button = [...document.querySelectorAll('button')].find({matcher_js});
-            if (!button || button.disabled || button.offsetParent === null) return false;
-            button.click();
-            return true;
-        }}"""
-    ))
-
-
-def _complete_profile(page, username: str, cfg: Config, log) -> None:
-    """Set recorded status and public profile fields after 2FA is secured."""
-    if not (cfg.set_profile_status or cfg.complete_profile):
-        return
-    profile = None
-    if cfg.complete_profile:
-        custom = {
-            "name": cfg.profile_name.strip(),
-            "bio": cfg.profile_bio.strip(),
-            "location": cfg.profile_location.strip(),
-        }
-        # Avoid external APIs entirely when every profile field is configured.
-        profile = _fetch_public_profile() if not all(custom.values()) else {}
-        profile = {key: custom[key] or profile[key] for key in custom}
-    page.goto(f"https://github.com/{username}", wait_until="domcontentloaded", timeout=60_000)
-
-    if cfg.set_profile_status:
-        status = cfg.profile_status.strip() or "On vacation"
-        # Try multiple selectors for the status launcher button
-        launcher_selectors = [
-            "button:has-text('Set status')",
-            "button[aria-label*='status' i]",
-            "react-partial-anchor button",
-            "button:has-text('Edit status')",
-            "summary:has-text('status')",
-        ]
-        launcher_opened = False
-        for sel in launcher_selectors:
-            try:
-                loc = page.locator(sel).first
-                if loc.count() and loc.is_visible():
-                    loc.click(timeout=5000)
-                    launcher_opened = True
-                    log(f"[*] profile status launcher clicked: {sel}")
-                    break
-            except Exception:
-                continue
-        if not launcher_opened:
-            launcher_opened = _visible_dom_click(
-                page,
-                "b => /status/i.test(b.getAttribute('aria-label') || '') || "
-                "(b.textContent || '').trim() === 'Set status' || "
-                "(b.textContent || '').trim() === 'Edit status'",
-            )
-            if not launcher_opened:
-                log("[i] profile status launcher not found; status skipped")
-            else:
-                log("[*] profile status launcher clicked via DOM")
-        if launcher_opened:
-            # try multiple selectors for the status input
-            status_input = None
-            input_selectors = [
-                "#user-status-status-input",
-                "input[aria-label*='status' i]",
-                "input[placeholder*='status' i]",
-                "textarea[aria-label*='status' i]",
-            ]
-            for sel in input_selectors:
-                try:
-                    loc = page.locator(sel).first
-                    if loc.count():
-                        loc.wait_for(state="visible", timeout=5000)
-                        status_input = loc
-                        log(f"[*] status input found: {sel}")
-                        break
-                except Exception:
-                    continue
-            if status_input is None:
-                raise SignupError("profile status popup did not open")
-            status_input.fill(status, timeout=8_000)
-            if status_input.input_value(timeout=3_000) != status:
-                raise SignupError("profile status input did not retain the configured value")
-
-            submit = page.locator("#__primerPortalRoot__ button").filter(
-                has_text="Set status"
-            ).last
-            try:
-                submit.click(timeout=8_000)
-            except Exception:
-                if not _visible_dom_click(
-                    page,
-                    "b => b.closest('#__primerPortalRoot') && "
-                    "(b.textContent || '').trim() === 'Set status'",
-                ):
-                    raise SignupError("cannot submit profile status")
-                log(f"[*] profile status submitted via DOM: {status}")
-
-            # A successful submit closes the status popup. It is the reliable
-            # confirmation independent of profile-page text rendering timing.
-            deadline = time.time() + 10
-            while time.time() < deadline:
-                try:
-                    if not status_input.is_visible():
-                        log(f"[*] profile status saved: {status}")
-                        break
-                except Exception:
-                    log(f"[*] profile status saved: {status}")
-                    break
-                time.sleep(0.4)
-            else:
-                raise SignupError(f"profile status did not save: {status}")
-
-    if not profile:
-        return
-    edit_button = page.locator("button[name='button']").filter(has_text="Edit profile").first
-    try:
-        edit_button.click(timeout=10_000)
-    except Exception as exc:
-        log(f"[i] Edit profile native click intercepted ({exc}); trying DOM click")
-        if not _visible_dom_click(
-            page,
-            "b => (b.textContent || '').trim() === 'Edit profile' || "
-            "b.classList.contains('js-profile-editable-edit-button')",
-        ):
-            raise SignupError("cannot open Edit profile (button not found for DOM click)")
-        log("[*] Edit profile clicked via DOM (overlay bypassed)")
-
-    name_input = page.locator("#user_profile_name").first
-    bio_input = page.locator("#user_profile_bio").first
-    location_input = page.locator("input[name='user[profile_location]']").first
-    for field in (name_input, bio_input, location_input):
-        field.wait_for(state="visible", timeout=15_000)
-    name_input.fill(profile["name"])
-    bio_input.fill(profile["bio"])
-    location_input.fill(profile["location"])
-
-    try:
-        page.locator(f"form[action='/users/{username}'] button").filter(
-            has_text="Save"
-        ).first.click(timeout=10_000)
-    except Exception:
-        if not _visible_dom_click(page, "b => (b.textContent || '').trim() === 'Save'"):
-            raise SignupError("cannot submit Edit profile")
-    try:
-        page.wait_for_timeout(1_500)
-        # After a successful save, either profile text is rendered or the form
-        # retains the saved input value during its partial refresh.
-        if profile["name"] not in _page_text(page) and name_input.input_value() != profile["name"]:
-            raise SignupError("profile save was not confirmed")
-    except SignupError:
-        raise
-    except Exception:
-        pass
-    log(f"[*] profile completed: {profile['name']} | {profile['location']}")
-
-
-def _enable_2fa(page, log) -> tuple[str, str]:
-    """Stage 5 (user recording): enable TOTP 2FA and return the secret.
-
-    Flow (from the recording):
-      Settings → Password and authentication → 'Enable two-factor authentication'
-      → 'Authenticator apps and browser extension' → click 'setup key' to reveal
-      the secret in a textfield → READ the secret → compute TOTP via pyotp →
-      fill input[name='otp'] → Continue → save recovery codes → 'I have saved my
-      recovery codes' → Done.
-    """
-    import pyotp
-
-    page.goto("https://github.com/settings/security", wait_until="domcontentloaded", timeout=60_000)
-    try:
-        page.wait_for_selector("#settings-frame", state="visible", timeout=30_000)
-    except Exception:
-        raise SignupError(f"security settings page failed; url={page.url}")
-
-    # 'Enable two-factor authentication' is an <a href> link (NOT a button):
-    # /settings/two_factor_authentication/setup/intro — navigate straight to it.
-    # NOTE: GitHub REGENERATES the TOTP secret on every load of this page, so
-    # read the secret only from the page we actually fill the code into.
-    try:
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=30_000):
-            page.goto(
-                "https://github.com/settings/two_factor_authentication/setup/intro",
-                wait_until="domcontentloaded", timeout=60_000,
-            )
-    except Exception:
-        pass  # already on the page; proceed
-
-    # wait for the setup wizard — try multiple selectors (GitHub may have changed DOM)
-    wizard_selectors = [
-        "div[data-target='two-factor-setup-verification.mashedSecret']",
-        "[data-target*='mashedSecret']",
-        "[data-target*='two-factor']",
-        "div[role='dialog']",
-        "#two-factor-setup",
-    ]
-    wizard_loaded = False
-    for sel in wizard_selectors:
-        try:
-            page.wait_for_selector(sel, state="attached", timeout=15_000)
-            wizard_loaded = True
-            log(f"[*] 2FA wizard found: {sel}")
-            break
-        except Exception:
-            continue
-    if not wizard_loaded:
-        # check if we're already on a 2FA page (maybe different URL structure)
-        if "two_factor" not in (page.url or ""):
-            raise SignupError(f"2FA setup wizard did not load; url={page.url}")
-
-    # reveal the setup key via the 'setup key' button
-    reveal_selectors = [
-        "#dialog-show-two-factor-setup-verification-mashed-secret",
-        "button:has-text('setup key')",
-        "button:has-text('Setup key')",
-        "button:has-text('text code')",
-        "details summary:has-text('setup key')",
-    ]
-    for sel in reveal_selectors:
-        try:
-            loc = page.locator(sel).first
-            if loc.count() and loc.is_visible():
-                loc.click(timeout=5000)
-                log(f"[*] 2FA setup key revealed via: {sel}")
-                break
-        except Exception:
-            continue
-    time.sleep(1)
-
-    # read the TOTP secret — try multiple selectors and patterns
-    secret = ""
-    secret_selectors = [
-        "div[data-target='two-factor-setup-verification.mashedSecret']",
-        "[data-target*='mashedSecret']",
-        "code[data-target*='secret']",
-        "samp",
-        "code",
-    ]
-    for sel in secret_selectors:
-        try:
-            txt = page.locator(sel).first.inner_text(timeout=3000) or ""
-            txt = txt.strip().replace(" ", "")
-            if txt and len(txt) >= 16 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" for c in txt.upper()):
-                secret = txt
-                log(f"[*] TOTP secret found via: {sel}")
-                break
-        except Exception:
-            continue
-    if not secret:
-        # fallback: scan page HTML for a base32-looking secret (16-32 chars)
-        import re
-
-        body = ""
-        try:
-            body = page.content()
-        except Exception:
-            body = ""
-        m = re.search(r"\b([A-Z2-7]{16,32})\b", body or "")
-        if m:
-            secret = m.group(1)
-    if not secret or len(secret) < 16:
-        raise SignupError(f"TOTP secret not found (got {secret!r})")
-    log(f"[*] TOTP secret captured: {secret}")
-
-    # close the setup-key dialog if it opened
-    try:
-        page.locator("[aria-label='Close']").first.click(timeout=3000)
-    except Exception:
-        pass
-
-    # compute the current TOTP code and submit it
-    totp = pyotp.TOTP(secret)
-    code = totp.now()
-    log(f"[*] TOTP code generated: {code}")
-    # the ENABLED otp input is the one with aria-label; input[name='otp'] is a
-    # hidden/disabled twin (from the recording) — fill the enabled one.
-    otp_input = page.locator(
-        "input[aria-label='Verify the code from the app']:not([disabled])"
-    ).first
-    try:
-        otp_input.fill(code, timeout=10_000)
-    except Exception:
-        otp_input = page.locator("input[name='otp']:not([disabled])").first
-        otp_input.fill(code, timeout=10_000)
-
-    # --- helper: click the VISIBLE enabled wizard button by its label ---
-    # The wizard keeps all steps' buttons in the DOM; Playwright's is_visible()
-    # is unreliable there, so use the browser's own visibility semantics
-    # (offsetParent !== null) to find the ACTIVE step's button.
-    def _click_active_wizard_button(page, label: str) -> bool:
-        try:
-            clicked = page.evaluate(
-                """(label) => {
-                    const btns = [...document.querySelectorAll(
-                        "button[data-target='single-page-wizard-step.nextButton'], " +
-                        "button[data-action='click:two-factor-setup-recovery-codes#onDownloadClick'], " +
-                        "button[data-action='click:single-page-wizard-step#onNext']"
-                    )];
-                    for (const b of btns) {
-                        if (b.offsetParent !== null && !b.disabled &&
-                            (b.textContent || '').trim().toLowerCase() === label.toLowerCase()) {
-                            b.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                }""",
-                label,
-            )
-            return bool(clicked)
-        except Exception:
-            return False
-
-    if not _click_active_wizard_button(page, "Continue"):
-        # fallback: any visible enabled next button (its label may be icon-only)
-        try:
-            page.evaluate(
-                """() => {
-                    const btns = [...document.querySelectorAll(
-                        "button[data-target='single-page-wizard-step.nextButton']"
-                    )];
-                    for (const b of btns) {
-                        if (b.offsetParent !== null && !b.disabled) { b.click(); return true; }
-                    }
-                    return false;
-                }"""
-            )
-        except Exception:
-            pass
-    log("[*] TOTP code submitted → Continue")
-    time.sleep(3)
-
-    # ---- recovery codes step ----
-    recovery = ""
-    try:
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            # prefer the dedicated element, else scan the page text
-            codes: list[str] = []
-            try:
-                rc_el = page.locator("two-factor-setup-recovery-codes, [data-target='two-factor-setup-recovery-codes']")
-                if rc_el.count():
-                    txt = rc_el.first.inner_text(timeout=3000) or ""
-                else:
-                    txt = _page_text(page)
-            except Exception:
-                txt = _page_text(page)
-            import re as _re
-
-            codes = list(dict.fromkeys(_re.findall(r"\b[a-z0-9]{5,6}-[a-z0-9]{5,6}\b", txt, _re.I)))
-            if codes:
-                recovery = "\n".join(codes[:16])
-                break
-            time.sleep(1)
-        if recovery:
-            log(f"[*] recovery codes captured ({len(recovery.splitlines())} codes)")
-    except Exception:
-        pass
-
-    # download recovery codes (as recorded), then confirm & finish
-    try:
-        with page.expect_download(timeout=10_000) as dl_info:
-            page.evaluate(
-                """() => {
-                    const b = [...document.querySelectorAll('button')].find(
-                        b => b.offsetParent !== null && !b.disabled &&
-                             /download/i.test((b.textContent || '').trim())
-                    );
-                    if (b) b.click();
-                }"""
-            )
-        download = dl_info.value
-        log(f"[*] recovery codes downloaded: {download.suggested_filename}")
-        try:
-            path = str(download.path())
-            if path and os.path.exists(path):
-                with open(path, encoding="utf-8") as f:
-                    dl_text = f.read()
-                if dl_text and not recovery:
-                    import re as _re
-
-                    codes = list(dict.fromkeys(_re.findall(r"\b[a-z0-9]{5,6}-[a-z0-9]{5,6}\b", dl_text, _re.I)))
-                    if codes:
-                        recovery = "\n".join(codes[:16])
-                        log(f"[*] recovery codes from download ({len(codes)} codes)")
-        except Exception:
-            pass
-    except Exception as exc:
-        log(f"[i] recovery codes download skipped: {exc}")
-
-    if _click_active_wizard_button(page, "I have saved my recovery codes"):
-        log("[*] recovery codes confirmed")
-    else:
-        # fallback: click by data-action nextButton (visible one)
-        page.evaluate(
-            """() => {
-                const btns = [...document.querySelectorAll(
-                    "button[data-target='single-page-wizard-step.nextButton']"
-                )];
-                for (const b of btns) {
-                    if (b.offsetParent !== null && !b.disabled) { b.click(); return true; }
-                }
-                return false;
-            }"""
-        )
-        log("[*] recovery codes confirmed (fallback)")
-    time.sleep(2)
-    if _click_active_wizard_button(page, "Done"):
-        log("[*] 2FA wizard finished")
-    else:
-        page.evaluate(
-            """() => {
-                const btns = [...document.querySelectorAll(
-                    "button[data-target='single-page-wizard-step.nextButton']"
-                )];
-                for (const b of btns) {
-                    if (b.offsetParent !== null && !b.disabled) { b.click(); return true; }
-                }
-                return false;
-            }"""
-        )
-    time.sleep(2)
-
-    # persist recovery codes next to the accounts file for account recovery
-    if recovery:
-        try:
-            rc_path = ROOT / "github_recovery_codes.txt"
-            with rc_path.open("a", encoding="utf-8") as f:
-                f.write(f"=== {page.url} @ {datetime.now().isoformat(timespec='seconds')} ===\n")
-                f.write(recovery + "\n\n")
-            log(f"[*] recovery codes saved to {rc_path.name}")
-        except Exception as exc:
-            log(f"[i] recovery codes write failed: {exc}")
-    return secret, recovery
 
 
 def _fill_signup_form(page, cfg, email, password, log, stop) -> str:
