@@ -33,7 +33,11 @@ class Config:
     tempik_api_base: str = "https://tempik.webkarya.net/api"
     tempik_domains: str = "webkarya.net"
     register_count: int = 1
+    # proxy: "single" mode uses Config.proxy (one URL);
+    #        "list" mode uses Config.proxy_list (newline-separated URLs, rotated per account)
+    proxy_mode: str = "single"  # "single" | "list"
     proxy: str = ""
+    proxy_list: str = ""  # newline-separated proxy URLs; used when proxy_mode="list"
     headless: bool = False
     delay_sec: float = 5.0
     max_username_tries: int = 6

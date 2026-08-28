@@ -206,7 +206,9 @@ class ConfigBody(BaseModel):
     tempik_api_base: Optional[str] = None
     tempik_domains: Optional[str] = None
     register_count: Optional[int] = None
+    proxy_mode: Optional[str] = None
     proxy: Optional[str] = None
+    proxy_list: Optional[str] = None
     headless: Optional[bool] = None
     delay_sec: Optional[float] = None
     max_username_tries: Optional[int] = None

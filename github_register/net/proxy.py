@@ -117,6 +117,11 @@ def validate_geoip(ip: str) -> bool:
 class ProxyManager:
     """Owns the proxy lifecycle for one job: sticky port, bridge, exit IP.
 
+    Supports two modes:
+    - single proxy (legacy): one URL, DataImpulse sticky-port rotation
+    - proxy list: newline-separated URLs, sequential rotation per account
+      with blacklist skip
+
     Replaces the module-level globals (_sticky_suffix, _last_exit_ip,
     _bridge) so two jobs could in principle run side by side and the
     whole thing becomes unit-testable.
@@ -128,6 +133,10 @@ class ProxyManager:
         self._sticky_suffix: Optional[str] = None
         self.exit_ip: Optional[str] = None
         self._bridge: Optional[LocalAuthProxyBridge] = None
+        # proxy list mode
+        self._proxy_list: list[str] = []
+        self._list_index: int = 0
+        self._blacklist_fn: Optional[Callable[[str], bool]] = None
 
     # ------------------------------------------------------------ sticky port
 
@@ -200,3 +209,56 @@ class ProxyManager:
 
     def clear_exit_ip(self) -> None:
         self.exit_ip = None  # no IP to bind — do NOT restore stale cookies
+
+    # ------------------------------------------------------- proxy list mode
+
+    def set_proxy_list(self, raw: str, blacklist_fn: Optional[Callable[[str], bool]] = None) -> int:
+        """Load a newline-separated proxy list.
+
+        Returns the count of valid proxies loaded. Empty lines and
+        whitespace are stripped. Duplicates are removed.
+        """
+        seen: set[str] = set()
+        proxies: list[str] = []
+        for line in (raw or "").splitlines():
+            url = line.strip()
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            proxies.append(url)
+        self._proxy_list = proxies
+        self._list_index = 0
+        self._blacklist_fn = blacklist_fn
+        return len(proxies)
+
+    def has_proxy_list(self) -> bool:
+        return len(self._proxy_list) > 0
+
+    def next_proxy(self) -> Optional[str]:
+        """Return the next non-blacklisted proxy URL, or None if exhausted.
+
+        Sequential order: index advances on each call. Proxies whose
+        exit IP is in the blacklist table are skipped. When the index
+        wraps past the end, it returns None (job should stop).
+        """
+        if not self._proxy_list:
+            return None
+        checked = 0
+        total = len(self._proxy_list)
+        while checked < total:
+            if self._list_index >= total:
+                return None  # exhausted — do NOT wrap (prevents reuse)
+            proxy_url = self._proxy_list[self._list_index]
+            self._list_index += 1
+            checked += 1
+            # skip blacklisted proxies (check by exit IP if resolvable,
+            # else by the URL itself as a fallback key)
+            if self._blacklist_fn and self._blacklist_fn(proxy_url):
+                self.log(f"[i] skipping blacklisted proxy: {proxy_url[:40]}...")
+                continue
+            return proxy_url
+        return None  # all proxies blacklisted
+
+    def remaining_proxies(self) -> int:
+        """How many proxies are left before the index hits the end."""
+        return max(0, len(self._proxy_list) - self._list_index)

@@ -17,10 +17,16 @@ const FIELDS = [
   { key: 'tempik_api_base', label: 'Tempik API Base URL', group: 'Tempik Mail', wide: true, showIf: { email_provider: 'tempik' } },
   { key: 'tempik_domains', label: 'Tempik Domains (comma-separated)', group: 'Tempik Mail', wide: true, showIf: { email_provider: 'tempik' } },
   { key: 'register_count', label: 'Register Count', type: 'number', group: 'Registration' },
+  { key: 'proxy_mode', label: 'Proxy Mode', group: 'Registration', type: 'select', options: [
+    { value: 'single', label: 'Single proxy (one URL, DataImpulse sticky rotation)' },
+    { value: 'list', label: 'Proxy list (multiple URLs, sequential per account)' },
+  ], wide: true },
+  { key: 'proxy', label: 'Proxy (http://user:pass@host:port)', secret: true, group: 'Registration', wide: true, showIf: { proxy_mode: 'single' } },
+  { key: 'proxy_list', label: 'Proxy list (one URL per line)', group: 'Registration', type: 'textarea', wide: true, showIf: { proxy_mode: 'list' },
+    placeholder: 'http://user:pass@host1:port\nhttp://user:pass@host2:port\n...' },
   { key: 'delay_sec', label: 'Delay between accounts (seconds)', type: 'number', group: 'Registration' },
   { key: 'max_username_tries', label: 'Max username tries', type: 'number', group: 'Registration' },
   { key: 'otp_timeout_sec', label: 'OTP timeout (detik)', type: 'number', group: 'Registration' },
-  { key: 'proxy', label: 'Proxy (http://user:pass@host:port)', secret: true, group: 'Registration', wide: true },
   { key: 'headless', label: 'Headless (no browser window, less stable)', type: 'checkbox', group: 'Registration', wide: true },
   { key: 'browser_profile_dir', label: 'Browser profile dir (DataDome trust)', group: 'Advanced', wide: true },
   { key: 'proxy_hard_block_retries', label: 'Proxy retries after DataDome hard block', type: 'number', group: 'Advanced' },
@@ -227,6 +233,27 @@ function Field({ f, value, onChange, onCheckZones }) {
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
         </select>
+      </label>
+    )
+  }
+  if (f.type === 'textarea') {
+    return (
+      <label style={styles.field}>
+        <span style={styles.label}>{f.label}</span>
+        <textarea
+          value={value ?? ''}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={f.placeholder || ''}
+          rows={8}
+          style={{
+            width: '100%', minHeight: 120,
+            border: '1px solid var(--border)', borderRadius: 10,
+            padding: '10px 12px', outline: 'none',
+            background: 'var(--bg-input)', color: 'var(--text-primary)',
+            font: 'inherit', fontSize: 12.5, fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+            resize: 'vertical',
+          }}
+        />
       </label>
     )
   }

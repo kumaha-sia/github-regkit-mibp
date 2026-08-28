@@ -401,8 +401,16 @@ def register_one(
 ) -> Optional["AccountRecord"]:
     """Register one account; returns an AccountRecord or None on failure."""
     stop = cancel_cb or (lambda: False)
-    # rotate IP before each account to avoid DataDome flagging reused IPs
-    if cfg.proxy and getattr(cfg, "rotate_ip_per_account", False):
+    # proxy rotation: list mode picks next URL; single mode rotates sticky port
+    if getattr(cfg, "proxy_mode", "single") == "list" and _proxy_manager.has_proxy_list():
+        next_url = _proxy_manager.next_proxy()
+        if next_url is None:
+            raise SignupError("all proxies exhausted or blacklisted — cannot continue")
+        _proxy_manager.proxy_url = next_url
+        _proxy_manager._sticky_suffix = None
+        _proxy_manager._stop_bridge()
+        log(f"[*] proxy switched: {next_url[:50]}... ({_proxy_manager.remaining_proxies()} remaining)")
+    elif cfg.proxy and getattr(cfg, "rotate_ip_per_account", False):
         _rotate_sticky_proxy()
         log("[*] IP rotated for new account (rotate_ip_per_account=true)")
     provider_name = getattr(cfg, "email_provider", "litensi") or "litensi"
@@ -531,6 +539,15 @@ def run_job(
     storage = SqliteStorage(DB_PATH)
     proxy_health.init(storage)
     proxy_health.purge_expired()  # drop stale entries at job start
+    # proxy list mode: load URLs + bind the blacklist checker
+    if getattr(cfg, "proxy_mode", "single") == "list" and cfg.proxy_list.strip():
+        count = _proxy_manager.set_proxy_list(
+            cfg.proxy_list,
+            blacklist_fn=proxy_health.is_blacklisted,
+        )
+        log(f"[*] proxy list loaded: {count} unique proxies (sequential rotation + blacklist skip)")
+    else:
+        _proxy_manager.set_proxy_list("")
     job_id = storage.create(JobRecord(target=cfg.register_count))
     if job_id_cb is not None:
         try:
