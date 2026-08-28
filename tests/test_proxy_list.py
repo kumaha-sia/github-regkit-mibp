@@ -111,6 +111,110 @@ def test_runner_proxy_list_exhaustion():
         runner._proxy_manager.set_proxy_list("")  # reset
 
 
+def test_config_proxy_file_field():
+    from github_register.config import Config
+
+    cfg = Config(proxy_mode="list", proxy_file="proxies.txt")
+    assert cfg.proxy_file == "proxies.txt"
+
+    cfg2 = Config()
+    assert cfg2.proxy_file == "proxies.txt"  # default
+
+
+def test_runner_reads_proxy_file(tmp_path=None):
+    """run_job must load proxies from file when proxy_mode=list."""
+    import tempfile
+    from pathlib import Path
+    import github_register.runner as runner
+    from github_register.config import Config
+    from github_register.storage.models import Account
+
+    tmp = Path(tempfile.mkdtemp())
+    runner.ACCOUNTS_DIR = tmp / "accounts"
+    runner.ACCOUNTS_DIR.mkdir(parents=True)
+    runner.RECOVERY_DIR = tmp / "recovery"
+    runner.DB_PATH = tmp / "regkit.db"
+    runner.ROOT = tmp
+
+    # write a proxy file
+    proxy_file = tmp / "proxies.txt"
+    proxy_file.write_text(
+        "http://file1@h1:80\nhttp://file2@h2:80\nhttp://file3@h3:80\n",
+        encoding="utf-8",
+    )
+
+    # fake register_one to capture the proxy list state
+    captured = {}
+    orig_reg = runner.register_one
+    orig_bridge = runner._stop_proxy_bridge
+
+    def fake_reg(cfg, log, stop=None):
+        pm = runner._proxy_manager
+        captured["list_len"] = len(pm._proxy_list)
+        captured["first"] = pm._proxy_list[0] if pm._proxy_list else None
+        return None  # fail = no save
+
+    runner.register_one = fake_reg
+    runner._stop_proxy_bridge = lambda: None
+    try:
+        cfg = Config(
+            proxy_mode="list",
+            proxy_file="proxies.txt",
+            register_count=1,
+            delay_sec=0,
+        )
+        logs = []
+        runner.run_job(cfg, log=logs.append)
+        assert captured["list_len"] == 3
+        assert captured["first"] == "http://file1@h1:80"
+        assert any("proxy list loaded" in m for m in logs)
+    finally:
+        runner.register_one = orig_reg
+        runner._stop_proxy_bridge = orig_bridge
+
+
+def test_runner_falls_back_to_proxy_list_config():
+    """When proxy file does not exist, fall back to Config.proxy_list."""
+    import tempfile
+    from pathlib import Path
+    import github_register.runner as runner
+    from github_register.config import Config
+
+    tmp = Path(tempfile.mkdtemp())
+    runner.ROOT = tmp
+    runner.ACCOUNTS_DIR = tmp / "accounts"
+    runner.ACCOUNTS_DIR.mkdir(parents=True)
+    runner.RECOVERY_DIR = tmp / "recovery"
+    runner.DB_PATH = tmp / "regkit.db"
+
+    # no proxy file on disk, but proxy_list has entries in config
+    captured = {}
+    orig_reg = runner.register_one
+    orig_bridge = runner._stop_proxy_bridge
+
+    def fake_reg(cfg, log, stop=None):
+        pm = runner._proxy_manager
+        captured["list_len"] = len(pm._proxy_list)
+        return None
+
+    runner.register_one = fake_reg
+    runner._stop_proxy_bridge = lambda: None
+    try:
+        cfg = Config(
+            proxy_mode="list",
+            proxy_file="nonexistent.txt",
+            proxy_list="http://cfg1@h:80\nhttp://cfg2@h:80",
+            register_count=1,
+            delay_sec=0,
+        )
+        logs = []
+        runner.run_job(cfg, log=logs.append)
+        assert captured["list_len"] == 2  # fell back to config
+    finally:
+        runner.register_one = orig_reg
+        runner._stop_proxy_bridge = orig_bridge
+
+
 if __name__ == "__main__":
     for name, fn in sorted((n, f) for n, f in globals().items() if n.startswith("test_")):
         fn()

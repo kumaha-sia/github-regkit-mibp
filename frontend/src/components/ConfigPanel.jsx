@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Search, Save } from 'lucide-react'
+import { Search, Save, FileText, Upload } from 'lucide-react'
 import { api } from '../api.js'
-import { Button, Card, Input } from './ui.jsx'
+import { Badge, Button, Card, Input } from './ui.jsx'
 
 // `wide: true` -> field mengambil full width dalam grid group (mis. label
 // panjang, teks bebas, secret string). Default = field kompak (setengah kolom).
@@ -22,8 +22,7 @@ const FIELDS = [
     { value: 'list', label: 'Proxy list (multiple URLs, sequential per account)' },
   ], wide: true },
   { key: 'proxy', label: 'Proxy (http://user:pass@host:port)', secret: true, group: 'Registration', wide: true, showIf: { proxy_mode: 'single' } },
-  { key: 'proxy_list', label: 'Proxy list (one URL per line)', group: 'Registration', type: 'textarea', wide: true, showIf: { proxy_mode: 'list' },
-    placeholder: 'http://user:pass@host1:port\nhttp://user:pass@host2:port\n...' },
+  { key: 'proxy_file', label: 'Proxy file path', group: 'Registration', wide: true, showIf: { proxy_mode: 'list' } },
   { key: 'delay_sec', label: 'Delay between accounts (seconds)', type: 'number', group: 'Registration' },
   { key: 'max_username_tries', label: 'Max username tries', type: 'number', group: 'Registration' },
   { key: 'otp_timeout_sec', label: 'OTP timeout (detik)', type: 'number', group: 'Registration' },
@@ -204,6 +203,9 @@ function GroupCard({ name, cfg, set, onCheckZones }) {
           </div>
         ))}
       </div>
+      {name === 'Registration' && cfg.proxy_mode === 'list' && (
+        <ProxyFileEditor />
+      )}
     </Card>
   )
 }
@@ -300,6 +302,72 @@ const layoutCSS = `
     .cfg-field-half, .cfg-field-wide { grid-column: 1 / -1; }
   }
 `
+
+function ProxyFileEditor() {
+  const [content, setContent] = useState('')
+  const [count, setCount] = useState(0)
+  const [path, setPath] = useState('')
+  const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    api.get('/api/proxies').then((d) => {
+      setContent(d.content || '')
+      setCount(d.count || 0)
+      setPath(d.path || 'proxies.txt')
+    }).catch(() => { setStatus('Failed to load proxy file') })
+  }, [])
+
+  async function save() {
+    setBusy(true)
+    try {
+      const d = await api.put('/api/proxies', { content })
+      setCount(d.count || 0)
+      setPath(d.path || 'proxies.txt')
+      setStatus(`Saved: ${d.count || 0} proxies in ${d.path}`)
+    } catch (e) {
+      setStatus('Error: ' + e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div style={{ marginTop: 14, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <FileText size={15} style={{ color: 'var(--accent)' }} />
+        <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Proxy File Editor</span>
+        <Badge tone="muted">{count} proxies</Badge>
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>({path})</span>
+      </div>
+      <textarea
+        value={content}
+        onChange={(e) => { setContent(e.target.value); setStatus('') }}
+        placeholder={'http://user:pass@host1:port\nhttp://user:pass@host2:port\n...'}
+        rows={10}
+        style={{
+          width: '100%', minHeight: 160,
+          border: '1px solid var(--border)', borderRadius: 10,
+          padding: '10px 12px', outline: 'none',
+          background: 'var(--bg-input)', color: 'var(--text-primary)',
+          font: 'inherit', fontSize: 12,
+          fontFamily: "'SF Mono', 'Fira Code', Menlo, monospace",
+          resize: 'vertical', lineHeight: 1.6,
+        }}
+      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8 }}>
+        <Button size="sm" variant="primary" onClick={save} disabled={busy}>
+          <Upload size={14} /> {busy ? 'Saving...' : 'Save proxy file'}
+        </Button>
+        {status && (
+          <span style={{ fontSize: 12, color: status.startsWith('Saved') ? 'var(--ok)' : 'var(--danger)' }}>
+            {status}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ZoneModal({ loading, error, data, currentZone, onClose, onUse, onRefresh }) {
   const zones = (data?.zones || []).slice().sort((a, b) => {

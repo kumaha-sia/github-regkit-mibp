@@ -539,13 +539,37 @@ def run_job(
     storage = SqliteStorage(DB_PATH)
     proxy_health.init(storage)
     proxy_health.purge_expired()  # drop stale entries at job start
-    # proxy list mode: load URLs + bind the blacklist checker
-    if getattr(cfg, "proxy_mode", "single") == "list" and cfg.proxy_list.strip():
-        count = _proxy_manager.set_proxy_list(
-            cfg.proxy_list,
-            blacklist_fn=proxy_health.is_blacklisted,
-        )
-        log(f"[*] proxy list loaded: {count} unique proxies (sequential rotation + blacklist skip)")
+    # proxy list mode: load URLs from file (preferred) or config field (fallback)
+    if getattr(cfg, "proxy_mode", "single") == "list":
+        raw_proxies = ""
+        source = ""
+        proxy_file_path = getattr(cfg, "proxy_file", "proxies.txt") or ""
+        # try the configured file path (relative to ROOT or absolute)
+        candidates = []
+        if proxy_file_path:
+            p = Path(proxy_file_path)
+            candidates.append(p if p.is_absolute() else ROOT / p)
+        for cand in candidates:
+            if cand.is_file():
+                try:
+                    raw_proxies = cand.read_text(encoding="utf-8")
+                    source = str(cand)
+                except Exception as exc:
+                    log(f"[!] cannot read proxy file {cand}: {exc}")
+                break
+        # fallback to config.proxy_list inline string
+        if not raw_proxies.strip():
+            raw_proxies = cfg.proxy_list or ""
+            source = "config.json proxy_list"
+        if raw_proxies.strip():
+            count = _proxy_manager.set_proxy_list(
+                raw_proxies,
+                blacklist_fn=proxy_health.is_blacklisted,
+            )
+            log(f"[*] proxy list loaded from {source}: {count} unique proxies")
+        else:
+            _proxy_manager.set_proxy_list("")
+            log("[!] proxy_mode=list but no proxies found in file or config")
     else:
         _proxy_manager.set_proxy_list("")
     job_id = storage.create(JobRecord(target=cfg.register_count))

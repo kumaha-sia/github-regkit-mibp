@@ -170,6 +170,41 @@ def test_append_log_persists_to_running_job():
     assert len(server._storage.events_after(jid)) == before
 
 
+def test_proxies_file_endpoint():
+    import tempfile
+    from pathlib import Path
+    # point ROOT to a temp dir with a proxies.txt
+    tmp = Path(tempfile.mkdtemp())
+    proxy_file = tmp / "proxies.txt"
+    # also patch _proxy_file_path to use our temp
+    import web.server as srv
+    orig_pfp = srv._proxy_file_path
+    srv._proxy_file_path = lambda: proxy_file
+    try:
+        # GET empty file
+        r = client.get("/api/proxies")
+        assert r.status_code == 200
+        assert r.json()["content"] == ""
+        assert r.json()["count"] == 0
+
+        # PUT content
+        r2 = client.put("/api/proxies", json={
+            "content": "http://a@h1:80\nhttp://b@h2:80\n\n"
+        })
+        assert r2.status_code == 200
+        assert r2.json()["count"] == 2
+
+        # GET back
+        r3 = client.get("/api/proxies")
+        assert r3.json()["count"] == 2
+        assert "http://a@h1:80" in r3.json()["content"]
+
+        # verify on disk
+        assert proxy_file.read_text(encoding="utf-8").startswith("http://a@h1:80")
+    finally:
+        srv._proxy_file_path = orig_pfp
+
+
 def test_config_roundtrip():
     r = client.get("/api/config")
     assert r.status_code == 200

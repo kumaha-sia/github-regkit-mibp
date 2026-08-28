@@ -209,6 +209,7 @@ class ConfigBody(BaseModel):
     proxy_mode: Optional[str] = None
     proxy: Optional[str] = None
     proxy_list: Optional[str] = None
+    proxy_file: Optional[str] = None
     headless: Optional[bool] = None
     delay_sec: Optional[float] = None
     max_username_tries: Optional[int] = None
@@ -357,6 +358,48 @@ async def api_put_config(body: ConfigBody, x_access_key: Optional[str] = Header(
         setattr(cfg, key, value)
     _save_config(cfg)
     return {"ok": True, "config": _public_config()}
+
+
+class ProxiesBody(BaseModel):
+    content: str = ""
+
+
+def _proxy_file_path() -> Path:
+    """Resolve the proxy file path from config (relative to ROOT)."""
+    cfg = load_config(ROOT / "config.json")
+    p = Path(getattr(cfg, "proxy_file", "proxies.txt") or "proxies.txt")
+    return p if p.is_absolute() else ROOT / p
+
+
+@app.get("/api/proxies")
+async def api_get_proxies(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Read the proxy list file content."""
+    _require_auth(x_access_key)
+    path = _proxy_file_path()
+    content = ""
+    if path.is_file():
+        try:
+            content = path.read_text(encoding="utf-8")
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"cannot read proxy file: {exc}")
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    return {"ok": True, "content": content, "count": len(lines), "path": path.name}
+
+
+@app.put("/api/proxies")
+async def api_put_proxies(
+    body: ProxiesBody, x_access_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    """Write the proxy list to the file."""
+    _require_auth(x_access_key)
+    path = _proxy_file_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.content or "", encoding="utf-8")
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"cannot write proxy file: {exc}")
+    lines = [l.strip() for l in (body.content or "").splitlines() if l.strip()]
+    return {"ok": True, "count": len(lines), "path": path.name}
 
 
 class LitensiZonesBody(BaseModel):

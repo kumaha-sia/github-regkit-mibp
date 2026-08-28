@@ -38,6 +38,7 @@ class Config:
     proxy_mode: str = "single"  # "single" | "list"
     proxy: str = ""
     proxy_list: str = ""  # newline-separated proxy URLs; used when proxy_mode="list"
+    proxy_file: str = "proxies.txt"  # path to a proxy list file; overrides proxy_list when it exists
     headless: bool = False
     delay_sec: float = 5.0
     max_username_tries: int = 6
