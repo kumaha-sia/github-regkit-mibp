@@ -441,6 +441,10 @@
 }
 .log-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; flex: none; }
 .log-toolbar-group { display: flex; align-items: center; gap: 10px; color: var(--text-muted); font-size: 12px; }
+.log-tabs { display: flex; gap: 0; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.log-tab { display: flex; align-items: center; gap: 5px; padding: 5px 12px; font-size: 12px; cursor: pointer; background: transparent; color: var(--text-muted); border: none; transition: background 0.15s, color 0.15s; }
+.log-tab:hover { background: var(--bg-hover); color: var(--text-primary); }
+.log-tab.active { background: var(--accent); color: #fff; }
 .log-follow { display: flex; align-items: center; gap: 6px; cursor: pointer; accent-color: var(--accent); }
 .log-terminal {
   flex: 1 1 0;
