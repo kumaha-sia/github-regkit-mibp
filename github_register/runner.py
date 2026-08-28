@@ -27,14 +27,22 @@ from .profiles import (
     parse_public_profile,
     username_from_email,
 )
+from .storage.models import Account as AccountRecord, Job as JobRecord
+from .storage.sqlite import SqliteStorage
+from .crypto import encrypt
 
 ROOT = Path(__file__).resolve().parent.parent
 ACCOUNTS_DIR = ROOT / "accounts"
 RECOVERY_DIR = ACCOUNTS_DIR / "recovery"
+DB_PATH = ROOT / "accounts" / "regkit.db"
 
 
 def _save_recovery_per_account(email: str, recovery: str, log) -> None:
-    """Store one account's multiline recovery codes in accounts/recovery/."""
+    """Store one account's multiline recovery codes in accounts/recovery/.
+
+    Kept for legacy compat; SQLite holds the same data in the account row
+    (written atomically by run_job's storage.add).
+    """
     if not recovery:
         return
     try:
@@ -2118,48 +2126,12 @@ def _post_form_flow(
         _raise_if_rate_limited(page)
         if _logged_in(context):
             log("[*] logged_in cookie confirmed — account is active")
-            # ---- stage 4: create first repository ----
-            if cfg.create_repo:
-                try:
-                    _create_repository(page, username, cfg.repo_name, log)
-                except Exception as exc:
-                    log(f"[i] create repo stage skipped: {exc}")
-            # ---- stage 5: enable TOTP 2FA ----
-            if cfg.enable_2fa:
-                try:
-                    totp_secret, recovery = _enable_2fa(page, log)
-                except Exception as exc:
-                    log(f"[i] 2FA stage failed (account still saved): {exc}")
-            _save_recovery_per_account(email, recovery, log)
-            try:
-                _complete_profile(page, username, cfg, log)
-            except Exception as exc:
-                log(f"[i] profile stage skipped (account still saved): {exc}")
-            _save_trust_cookie(context, log)  # persist DataDome trust for the next fresh run
-            return username, totp_secret, recovery
+            return _finalize_account(page, context, cfg, email, username, log, stop)
         # GitHub sends fresh signups to /login: sign in with the new creds
         if "/login" in (page.url or ""):
             if _try_login(page, email, password, context, log):
                 log("[*] logged_in cookie confirmed after auto-login")
-                # ---- stage 4: create first repository ----
-                if cfg.create_repo:
-                    try:
-                        _create_repository(page, username, cfg.repo_name, log)
-                    except Exception as exc:
-                        log(f"[i] create repo stage skipped: {exc}")
-                # ---- stage 5: enable TOTP 2FA ----
-                if cfg.enable_2fa:
-                    try:
-                        totp_secret, recovery = _enable_2fa(page, log)
-                    except Exception as exc:
-                        log(f"[i] 2FA stage failed (account still saved): {exc}")
-                _save_recovery_per_account(email, recovery, log)
-                try:
-                    _complete_profile(page, username, cfg, log)
-                except Exception as exc:
-                    log(f"[i] profile stage skipped (account still saved): {exc}")
-                _save_trust_cookie(context, log)  # persist DataDome trust for the next fresh run
-                return username, totp_secret, recovery
+                return _finalize_account(page, context, cfg, email, username, log, stop)
             raise SignupError("auto-login after signup failed")
         if _post_submit_state(page, context) == "pending":
             _sleep_with_cancel(2, stop)
@@ -2171,6 +2143,36 @@ def _post_form_flow(
         f"account not confirmed logged-in after flow; url={page.url} "
         f"body={_page_text(page)[:200]!r}"
     )
+
+
+def _finalize_account(
+    page, context, cfg: Config, email: str, username: str, log, stop
+) -> tuple[str, str, str]:
+    """Stages after the account is logged in: repo, 2FA, recovery, profile.
+
+    Returns (username, totp_secret, recovery_codes). Post-signup stage
+    failures never discard an already-verified account — the reason is
+    logged and the flow continues.
+    """
+    totp_secret = ""
+    recovery = ""
+    if cfg.create_repo:
+        try:
+            _create_repository(page, username, cfg.repo_name, log)
+        except Exception as exc:
+            log(f"[i] create repo stage skipped: {exc}")
+    if cfg.enable_2fa:
+        try:
+            totp_secret, recovery = _enable_2fa(page, log)
+        except Exception as exc:
+            log(f"[i] 2FA stage failed (account still saved): {exc}")
+    _save_recovery_per_account(email, recovery, log)
+    try:
+        _complete_profile(page, username, cfg, log)
+    except Exception as exc:
+        log(f"[i] profile stage skipped (account still saved): {exc}")
+    _save_trust_cookie(context, log)  # persist DataDome trust for the next fresh run
+    return username, totp_secret, recovery
 
 
 def _run_signup(
@@ -2318,8 +2320,8 @@ def _make_mail_provider(cfg: Config):
 
 def register_one(
     cfg: Config, log: Callable[[str], None], cancel_cb: Optional[Callable[[], bool]] = None
-) -> Optional[str]:
-    """Register one account; returns its one-line account record or None."""
+) -> Optional["AccountRecord"]:
+    """Register one account; returns an AccountRecord or None on failure."""
     stop = cancel_cb or (lambda: False)
     # rotate IP before each account to avoid DataDome flagging reused IPs
     if cfg.proxy and getattr(cfg, "rotate_ip_per_account", False):
@@ -2390,10 +2392,12 @@ def register_one(
                     f"{rate_left} retries left")
                 _rotate_sticky_proxy()
                 _sleep_with_cancel(8, stop)
-        # Recovery codes are stored in accounts/recovery/<email-hash>.txt.
-        # This fifth marker lets the account UI show the recovery-code action
-        # without exposing the codes in the main account list.
-        return f"{email}----{password}----{username}----{totp_secret}----{int(bool(recovery))}"
+        # Recovery codes ride on the record; the legacy 5th marker (has_recovery)
+        # is derived at export time, not stored in the flow layer.
+        return AccountRecord(
+            email=email, username=username, password=password,
+            totp_secret=totp_secret, recovery_codes=recovery,
+        )
     except KeyboardInterrupt:
         raise
     except RegistrationCancelled:
@@ -2438,6 +2442,9 @@ def run_job(
 
     ACCOUNTS_DIR.mkdir(parents=True, exist_ok=True)
     out = ACCOUNTS_DIR / f"github_accounts_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+    storage = SqliteStorage(DB_PATH)
+    job_id = storage.create(JobRecord(target=cfg.register_count))
+    job_error = ""
     ok = fail = 0
     log(f"[*] github-regkit | engine=Camoufox (Firefox anti-detect) | site={cfg.litensi_site} "
         f"| headless={cfg.headless} | target={cfg.register_count} | output={out.name}")
@@ -2447,9 +2454,9 @@ def run_job(
             if stop():
                 break
             log(f"--- account {i}/{cfg.register_count} ---")
-            line = None
+            record = None
             try:
-                line = register_one(cfg, log, stop)
+                record = register_one(cfg, log, stop)
             except KeyboardInterrupt:
                 raise
             except RegistrationCancelled:
@@ -2457,18 +2464,25 @@ def run_job(
                 break
             except GitHubRateLimited as exc:
                 log(f"[!] rate-limit retries exhausted — stopping job: {exc}")
+                job_error = str(exc)
                 break
             except LitensiError as exc:  # provider-level error: abort job, not just this account
                 log(f"[!] litensi error, aborting: {exc}")
+                job_error = str(exc)
                 break
-            if line:
-                # encrypt line if encryption is enabled; otherwise plaintext
-                from .crypto import encrypt
-                enc_line = encrypt(line)
-                with out.open("a", encoding="utf-8") as f:
-                    f.write(enc_line + "\n")
-                ok += 1
-                log(f"[+] {line.split('----')[0]} saved to {out.name}")
+            if record is not None:
+                record.job_id = job_id
+                try:
+                    storage.add(record)  # single source of truth (encrypted columns)
+                    # dual-write the legacy txt for backward compat / manual export
+                    enc_line = encrypt(record.to_legacy_line())
+                    with out.open("a", encoding="utf-8") as f:
+                        f.write(enc_line + "\n")
+                    ok += 1
+                    log(f"[+] {record.email} saved to {out.name}")
+                except Exception as exc:
+                    fail += 1
+                    log(f"[!] save failed for {record.email}: {exc}")
             else:
                 fail += 1
             log(f"[*] stats: OK {ok} | FAIL {fail}")
@@ -2479,8 +2493,16 @@ def run_job(
         # A web Stop click may arrive during inter-account delay, not only
         # inside register_one. This is expected control flow, not a job error.
         log("[!] stop requested — job ended cleanly")
+    except Exception as exc:
+        job_error = str(exc)
+        raise
     finally:
         _stop_proxy_bridge()  # stop the local auth bridge if it was started
+        try:
+            status = "stopped" if stop() and not job_error else ("error" if job_error else "done")
+            storage.finish(job_id, ok=ok, fail=fail, status=status, error=job_error)
+        except Exception as exc:
+            log(f"[i] job record finish failed: {exc}")
         log(f"[*] done: OK {ok} | FAIL {fail}")
         _emit_progress(ok, fail)  # final snapshot
     return ok, fail, out
