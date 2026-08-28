@@ -60,7 +60,11 @@ recorded_steps.py
 accounts/
 regkit_codebuddy.*
 
+# === Temp logs (sensitive — contain emails, proxy IPs) ===
+temp_*.txt
+
 # === Log & temp ===
 *.log
 *.tmp
 .DS_Store
+

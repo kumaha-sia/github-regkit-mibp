@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """FastAPI control plane for the GitHub register toolkit."""
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ RECOVERY_DIR = ACCOUNTS_DIR / "recovery"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from github_register.config import Config, load_config, save_config
+from github_register.config import Config, load_config, save_config, SENSITIVE_FIELDS
 from github_register.crypto import encrypt, decrypt, is_enabled as crypto_enabled
 from github_register.litensi import LitensiClient, LitensiError
 from github_register.notifier import send_notification, format_job_message
@@ -41,8 +41,6 @@ HOST = (os.getenv("GITHUB_REGISTER_HOST") or "127.0.0.1").strip()
 PORT = int(os.getenv("GITHUB_REGISTER_PORT") or "8093")  # 8092 is used by grok-regkit (Chromium)
 
 DIST = ROOT / "frontend" / "dist"
-
-SECRET_FIELDS = {"litensi_api_key", "proxy"}
 
 
 def _migrate_legacy_account_files() -> None:
@@ -140,7 +138,7 @@ def _append_log(message: str) -> None:
 
 
 def _mask_value(key: str, value: Any) -> Any:
-    if key not in SECRET_FIELDS:
+    if key not in SENSITIVE_FIELDS:
         return value
     s = "" if value is None else str(value)
     if not s:
@@ -153,7 +151,7 @@ def _mask_value(key: str, value: Any) -> Any:
 def _public_config() -> Dict[str, Any]:
     cfg = load_config(ROOT / "config.json")
     masked = {k: _mask_value(k, v) for k, v in asdict(cfg).items()}
-    for key in SECRET_FIELDS:
+    for key in SENSITIVE_FIELDS:
         raw = getattr(cfg, key, "")
         masked[f"has_{key}"] = bool(str(raw or "").strip())
     return masked
@@ -329,12 +327,12 @@ async def api_put_config(body: ConfigBody, x_access_key: Optional[str] = Header(
     cfg = load_config(ROOT / "config.json")
     updates = body.model_dump(exclude_unset=True)
     for key, value in updates.items():
-        if key in SECRET_FIELDS and isinstance(value, str):
+        if key in SENSITIVE_FIELDS and isinstance(value, str):
             stripped = value.strip()
             if stripped == "":
                 setattr(cfg, key, "")
                 continue
-            if "*" in stripped:  # masked placeholder from GET — keep previous
+            if "*" in stripped:  # masked placeholder from GET â€” keep previous
                 continue
         setattr(cfg, key, value)
     _save_config(cfg)
@@ -521,33 +519,40 @@ def _write_accounts_file(path: Path, content: str) -> None:
 
 
 def _parse_accounts_file(path: Path) -> List[Dict[str, str]]:
-    """Parse account records, including whether a recovery file is available."""
+    """Parse account records, including whether a recovery file is available.
+
+    Unreadable/corrupt lines are skipped and reported on stderr instead of
+    silently discarding the whole file.
+    """
     rows: List[Dict[str, str]] = []
     try:
         text = _read_accounts_file(path)
-        for line in text.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            parts = [p.strip() for p in line.split("----")]
-            if len(parts) >= 4:
-                rows.append({
-                    "email": parts[0], "password": parts[1],
-                    "username": parts[2], "totp": parts[3],
-                    "has_recovery": _recovery_path(parts[0]).is_file(),
-                })
-            elif len(parts) == 3:
-                rows.append({
-                    "email": parts[0], "password": parts[1],
-                    "username": parts[2], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
-                })
-            elif len(parts) == 2:
-                rows.append({
-                    "email": parts[0], "password": parts[1],
-                    "username": parts[0].split("@")[0], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
-                })
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[!] cannot read {path.name}: {exc}", file=sys.stderr)
+        return rows
+    for lineno, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        parts = [p.strip() for p in line.split("----")]
+        if len(parts) >= 4:
+            rows.append({
+                "email": parts[0], "password": parts[1],
+                "username": parts[2], "totp": parts[3],
+                "has_recovery": _recovery_path(parts[0]).is_file(),
+            })
+        elif len(parts) == 3:
+            rows.append({
+                "email": parts[0], "password": parts[1],
+                "username": parts[2], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
+            })
+        elif len(parts) == 2:
+            rows.append({
+                "email": parts[0], "password": parts[1],
+                "username": parts[0].split("@")[0], "totp": "", "has_recovery": _recovery_path(parts[0]).is_file(),
+            })
+        else:
+            print(f"[!] {path.name}:{lineno}: malformed line skipped", file=sys.stderr)
     return rows
 
 

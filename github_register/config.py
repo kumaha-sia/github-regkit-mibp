@@ -8,8 +8,16 @@ from pathlib import Path
 from .crypto import encrypt, decrypt
 
 
-# Fields that are encrypted at rest in config.json
-SENSITIVE_FIELDS = {"litensi_api_id", "litensi_api_key", "proxy"}
+# Fields that are encrypted at rest in config.json AND masked in the web UI.
+# Single source of truth — the web server imports this set instead of
+# maintaining a second list that silently drifts.
+SENSITIVE_FIELDS = {
+    "litensi_api_id",
+    "litensi_api_key",
+    "proxy",
+    "notify_token",
+    "codebuddy_router_password",
+}
 
 
 @dataclass
@@ -51,6 +59,9 @@ class Config:
     # notification webhook (Telegram/Discord/generic)
     notify_url: str = ""              # webhook URL; blank = disabled
     notify_token: str = ""            # optional bearer token or Telegram bot token
+    # CodeBuddy router (external OAuth device-code service)
+    codebuddy_router_url: str = ""    # e.g. https://router.example.com/api; blank = disabled
+    codebuddy_router_password: str = ""
     # scheduled jobs (cron-like)
     schedule_cron: str = ""          # cron expression, e.g. "0 9 * * *" = daily 9am
     schedule_count: int = 0          # accounts per scheduled run; 0 = disabled
