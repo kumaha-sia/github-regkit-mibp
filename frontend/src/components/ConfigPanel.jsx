@@ -35,6 +35,10 @@ const FIELDS = [
   { key: 'profile_name', label: 'Profile name (blank = Random User)', group: 'Post-Signup Stages' },
   { key: 'profile_location', label: 'Profile location (blank = Random User)', group: 'Post-Signup Stages' },
   { key: 'profile_bio', label: 'Profile bio (blank = ZenQuotes)', group: 'Post-Signup Stages', wide: true },
+  { key: 'notify_url', label: 'Webhook URL (blank = disabled)', group: 'Notifications', wide: true },
+  { key: 'notify_token', label: 'Webhook token (Telegram chat_id / Bearer)', secret: true, group: 'Notifications', wide: true },
+  { key: 'codebuddy_router_url', label: 'CodeBuddy Router URL (blank = disabled)', group: 'CodeBuddy Router', wide: true },
+  { key: 'codebuddy_router_password', label: 'CodeBuddy Router Password', secret: true, group: 'CodeBuddy Router', wide: true },
 ]
 
 // Group-level metadata: which column (kiri/kanan) di layout 2-kolom di layar lebar.
@@ -46,6 +50,8 @@ const GROUP_COLUMN = {
   'Registration': 'left',
   'Advanced': 'right',
   'Post-Signup Stages': 'right',
+  'Notifications': 'right',
+  'CodeBuddy Router': 'right',
 }
 
 export default function ConfigPanel() {
