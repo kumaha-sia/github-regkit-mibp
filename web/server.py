@@ -227,8 +227,8 @@ class ConfigBody(BaseModel):
     profile_location: Optional[str] = None
     notify_url: Optional[str] = None
     notify_token: Optional[str] = None
-    codebuddy_router_url: Optional[str] = None
-    codebuddy_router_password: Optional[str] = None
+    router_url: Optional[str] = None
+    router_password: Optional[str] = None
     schedule_cron: Optional[str] = None
     schedule_count: Optional[int] = None
 

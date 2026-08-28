@@ -179,45 +179,45 @@ def test_config_roundtrip():
     assert "*" in body["proxy"] or body["proxy"] == ""
 
 
-def test_config_codebuddy_roundtrip():
-    """PUT codebuddy fields must persist and appear in GET response."""
+def test_config_router_roundtrip():
+    """PUT router fields must persist and appear in GET response."""
     # PUT with real values
     r = client.put("/api/config", json={
-        "codebuddy_router_url": "https://router.test/api",
-        "codebuddy_router_password": "testpass123",
+        "router_url": "https://router.test/api",
+        "router_password": "testpass123",
     })
     assert r.status_code == 200
     body = r.json()["config"]
     # URL is NOT sensitive -> returned as-is
-    assert body["codebuddy_router_url"] == "https://router.test/api"
+    assert body["router_url"] == "https://router.test/api"
     # password IS sensitive -> masked
-    assert "*" in body["codebuddy_router_password"]
-    assert body.get("has_codebuddy_router_password") is True
+    assert "*" in body["router_password"]
+    assert body.get("has_router_password") is True
 
     # GET again — values persist
     r2 = client.get("/api/config")
     body2 = r2.json()["config"]
-    assert body2["codebuddy_router_url"] == "https://router.test/api"
-    assert "*" in body2["codebuddy_router_password"]  # masked
-    assert body2.get("has_codebuddy_router_password") is True
+    assert body2["router_url"] == "https://router.test/api"
+    assert "*" in body2["router_password"]  # masked
+    assert body2.get("has_router_password") is True
 
     # PUT with masked placeholder must NOT overwrite the stored value
     r3 = client.put("/api/config", json={
-        "codebuddy_router_password": "te*****23",  # masked placeholder
+        "router_password": "te*****23",  # masked placeholder
     })
     assert r3.status_code == 200
     body3 = r3.json()["config"]
     # still has the real password (masked), not overwritten by placeholder
-    assert body3.get("has_codebuddy_router_password") is True
+    assert body3.get("has_router_password") is True
 
     # clear the password
     r4 = client.put("/api/config", json={
-        "codebuddy_router_password": "",
+        "router_password": "",
     })
     assert r4.status_code == 200
     body4 = r4.json()["config"]
-    assert body4["codebuddy_router_password"] == ""
-    assert body4.get("has_codebuddy_router_password") is False
+    assert body4["router_password"] == ""
+    assert body4.get("has_router_password") is False
 
 
 if __name__ == "__main__":

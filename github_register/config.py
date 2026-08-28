@@ -16,7 +16,7 @@ SENSITIVE_FIELDS = {
     "litensi_api_key",
     "proxy",
     "notify_token",
-    "codebuddy_router_password",
+    "router_password",
 }
 
 
@@ -60,8 +60,8 @@ class Config:
     notify_url: str = ""              # webhook URL; blank = disabled
     notify_token: str = ""            # optional bearer token or Telegram bot token
     # CodeBuddy router (external OAuth device-code service)
-    codebuddy_router_url: str = ""    # e.g. https://router.example.com/api; blank = disabled
-    codebuddy_router_password: str = ""
+    router_url: str = ""    # e.g. https://router.example.com/api; blank = disabled
+    router_password: str = ""
     # scheduled jobs (cron-like)
     schedule_cron: str = ""          # cron expression, e.g. "0 9 * * *" = daily 9am
     schedule_count: int = 0          # accounts per scheduled run; 0 = disabled
