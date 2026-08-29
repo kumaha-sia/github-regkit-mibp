@@ -12,7 +12,6 @@ from .crypto import encrypt, decrypt
 # Single source of truth — the web server imports this set instead of
 # maintaining a second list that silently drifts.
 SENSITIVE_FIELDS = {
-    "litensi_api_id",
     "litensi_api_key",
     "proxy",
     "notify_token",

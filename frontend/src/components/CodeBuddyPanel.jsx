@@ -6,8 +6,10 @@ import { Badge, Button, Card, EmptyState } from './ui.jsx'
 export default function CodeBuddyPanel() {
   const [status, setStatus] = useState(null)
   const [accounts, setAccounts] = useState([])
+  const [available, setAvailable] = useState([])
   const [count, setCount] = useState(1)
   const [region, setRegion] = useState('')
+  const [accountId, setAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const timer = useRef(null)
@@ -16,6 +18,7 @@ export default function CodeBuddyPanel() {
   useEffect(() => {
     loadStatus()
     loadAccounts()
+    loadAvailable()
     return () => { if (timer.current) clearInterval(timer.current) }
   }, [])
 
@@ -46,10 +49,19 @@ export default function CodeBuddyPanel() {
     } catch { /* ignore */ }
   }
 
+  async function loadAvailable() {
+    try {
+      const d = await api.get('/api/codebuddy/available-accounts')
+      setAvailable(d.accounts || [])
+    } catch { /* ignore */ }
+  }
+
   async function startJob() {
     setBusy(true); setMsg('')
     try {
-      await api.post('/api/codebuddy/start', { count, region: region || null })
+      const body = { count, region: region || null }
+      if (accountId) body.account_id = Number(accountId)
+      await api.post('/api/codebuddy/start', body)
       setMsg('Job started')
       loadStatus()
     } catch (e) {
@@ -83,7 +95,7 @@ export default function CodeBuddyPanel() {
               {s.running ? <><Loader size={12} className="spin" /> Running</> : 'Idle'}
             </Badge>
           </div>
-          <Button size="sm" variant="ghost" onClick={() => { loadStatus(); loadAccounts() }}>
+          <Button size="sm" variant="ghost" onClick={() => { loadStatus(); loadAccounts(); loadAvailable() }}>
             <RefreshCw size={14} />
           </Button>
         </div>
@@ -121,11 +133,27 @@ export default function CodeBuddyPanel() {
           <div style={styles.startForm}>
             <div style={styles.formRow}>
               <label style={styles.formLabel}>
+                <span>Account (blank = auto-pick)</span>
+                <select
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  style={styles.selectInput}
+                >
+                  <option value="">Auto (next available)</option>
+                  {available.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.email} ({a.username})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label style={styles.formLabel}>
                 <span>Count</span>
                 <input
                   type="number" min={1} max={1000} value={count}
                   onChange={(e) => setCount(Math.max(1, Number(e.target.value) || 1))}
                   style={styles.numInput}
+                  disabled={!!accountId}
                 />
               </label>
               <label style={styles.formLabel}>
@@ -137,6 +165,11 @@ export default function CodeBuddyPanel() {
                 />
               </label>
             </div>
+            {accountId && (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>
+                Using specific account — Count is ignored
+              </div>
+            )}
             <Button variant="primary" onClick={startJob} disabled={busy || !s.ok} style={{ marginTop: 10 }}>
               <Play size={14} /> Start CodeBuddy Registration
             </Button>
@@ -218,6 +251,7 @@ const styles = {
   formRow: { display: 'flex', gap: 14, flexWrap: 'wrap' },
   formLabel: { display: 'flex', flexDirection: 'column', gap: 5, fontSize: 12, color: 'var(--muted)', fontWeight: 500 },
   numInput: { width: 80, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text)', fontSize: 13, outline: 'none' },
+  selectInput: { width: 280, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text)', fontSize: 13, outline: 'none', cursor: 'pointer' },
   textInput: { width: 200, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--bg-input)', color: 'var(--text)', fontSize: 13, outline: 'none' },
   tableWrap: { overflowX: 'auto', margin: '0 -4px' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: 12.5 },

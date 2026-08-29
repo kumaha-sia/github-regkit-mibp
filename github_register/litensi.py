@@ -37,10 +37,19 @@ class LitensiClient:
 
     def _post(self, path: str, data: dict, base: Optional[str] = None) -> dict:
         url = f"{base or API_BASE}/{path}" if path else (base or API_BASE)
+        # Litensi API expects api_id as a number (not string). Convert it.
+        post_data = dict(data)
+        if "api_id" in post_data and post_data["api_id"]:
+            try:
+                post_data["api_id"] = int(post_data["api_id"])
+            except (ValueError, TypeError):
+                raise LitensiError(
+                    f"litensi api_id must be a number, got: {post_data['api_id']!r}"
+                )
         last_exc: Exception | None = None
         for attempt in range(3):  # transient network hiccups: retry
             try:
-                resp = self.session.post(url, data=data, timeout=30)
+                resp = self.session.post(url, data=post_data, timeout=30)
                 break
             except requests.RequestException as exc:
                 last_exc = exc

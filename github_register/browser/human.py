@@ -124,6 +124,26 @@ def first(page, selectors: list[str], visible: bool = False):
     raise SignupError(f"no visible element matching {selectors}")
 
 
+def first_in_frame(frame_locator, selectors: list[str], visible: bool = False):
+    """First locator matching any selector **inside a Playwright FrameLocator**.
+
+    Used for CodeBuddy's Keycloak login iframe — all form elements
+    (checkbox, OAuth buttons) live inside an <iframe>, not the main page.
+    """
+    from ..errors import SignupError
+
+    for sel in selectors:
+        loc = frame_locator.locator(sel).first
+        try:
+            if loc.count() == 0:
+                continue
+            if not visible or loc.is_visible():
+                return loc
+        except Exception:
+            continue
+    raise SignupError(f"no visible element matching {selectors} in iframe")
+
+
 def page_text(page) -> str:
     try:
         return page.locator("body").inner_text(timeout=3000)

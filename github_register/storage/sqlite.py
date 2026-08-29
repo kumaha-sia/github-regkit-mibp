@@ -413,15 +413,38 @@ class SqliteStorage:
 
     # ------------------------------------------------- codebuddy accounts
 
-    def get_next_for_codebuddy(self) -> Optional[Account]:
-        """Pick the next active GitHub account not yet registered on CodeBuddy."""
-        row = self._conn().execute(
-            "SELECT a.* FROM accounts a "
+    def get_next_for_codebuddy(self, account_id: Optional[int] = None) -> Optional[Account]:
+        """Pick the next active GitHub account not yet registered on CodeBuddy.
+
+        If account_id is given, pick that specific account (if available).
+        Otherwise pick the next by id.
+        """
+        if account_id:
+            row = self._conn().execute(
+                "SELECT a.* FROM accounts a "
+                "LEFT JOIN codebuddy_accounts ca ON ca.account_id = a.id "
+                "WHERE a.id = ? AND a.status = 'active' AND ca.id IS NULL",
+                (account_id,),
+            ).fetchone()
+        else:
+            row = self._conn().execute(
+                "SELECT a.* FROM accounts a "
+                "LEFT JOIN codebuddy_accounts ca ON ca.account_id = a.id "
+                "WHERE a.status = 'active' AND ca.id IS NULL "
+                "ORDER BY a.id LIMIT 1"
+            ).fetchone()
+        return self._row_to_account(row) if row else None
+
+    def list_available_for_codebuddy(self) -> list[dict]:
+        """List all active accounts not yet registered on CodeBuddy."""
+        rows = self._conn().execute(
+            "SELECT a.id, a.email, a.username "
+            "FROM accounts a "
             "LEFT JOIN codebuddy_accounts ca ON ca.account_id = a.id "
             "WHERE a.status = 'active' AND ca.id IS NULL "
-            "ORDER BY a.id LIMIT 1"
-        ).fetchone()
-        return self._row_to_account(row) if row else None
+            "ORDER BY a.id"
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def add_codebuddy_account(
         self, account_id: int, connection_id: int, region: str = ""

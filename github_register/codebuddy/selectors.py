@@ -13,24 +13,24 @@ from __future__ import annotations
 # --- CodeBuddy signup page --------------------------------------------------
 
 # Checkbox: "I confirm that I have read and acknowledge..."
+# CodeBuddy Keycloak iframe uses id="agree-policy-account"
 AGREE_CHECKBOX = [
+    "#agree-policy-account",
     "input[type='checkbox']",
     "label:has-text('confirm')",
     "input[id*='agree']",
     "input[id*='terms']",
 ]
 
-# "Sign up with GitHub" button (Octocat icon)
+# "Sign up with GitHub" button — inside Keycloak iframe, it's an <a> link
 GITHUB_SIGNUP_BUTTON = [
-    "button:has-text('Sign up with GitHub')",
     "a:has-text('Sign up with GitHub')",
-    "button:has-text('Sign Up with GitHub')",
+    "button:has-text('Sign up with GitHub')",
     "a:has-text('Sign Up with GitHub')",
-    "button:has-text('Sign up with GitHub')",
-    "a:has-text('Sign up with GitHub')",
-    "button:has-text('GitHub')",
+    "button:has-text('Sign Up with GitHub')",
     "[data-provider='github']",
     "a:has-text('GitHub')",
+    "button:has-text('GitHub')",
     "button:has(svg[class*='github'])",
     "button:has(img[alt*='GitHub'])",
     "a:has(img[alt*='GitHub'])",
@@ -175,4 +175,19 @@ APP_SUSPENDED_MARKERS = (
     "application suspended",
     "app suspended",
     "the oauth application",
+)
+
+# CodeBuddy anti-fraud / account restricted
+ACCOUNT_RESTRICTED_MARKERS = (
+    "account access restricted",
+    "account is restricted",
+    "access restricted",
+)
+
+# CodeBuddy page expired (device code timeout)
+PAGE_EXPIRED_MARKERS = (
+    "page expired",
+    "link has expired",
+    "session expired",
+    "code has expired",
 )

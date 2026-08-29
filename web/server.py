@@ -358,12 +358,12 @@ async def api_put_config(body: ConfigBody, x_access_key: Optional[str] = Header(
     cfg = load_config(ROOT / "config.json")
     updates = body.model_dump(exclude_unset=True)
     for key, value in updates.items():
-        if key in SENSITIVE_FIELDS and isinstance(value, str):
+        if isinstance(value, str):
             stripped = value.strip()
             if stripped == "":
                 setattr(cfg, key, "")
                 continue
-            if "*" in stripped:  # masked placeholder from GET â€” keep previous
+            if "*" in stripped:  # masked placeholder from GET — keep previous
                 continue
         setattr(cfg, key, value)
     _save_config(cfg)
@@ -442,7 +442,7 @@ async def api_litensi_zones(
         s = override.strip()
         if not s:
             return fallback or ""
-        if secret and "*" in s:
+        if "*" in s:  # masked placeholder from GET — keep previous value
             return fallback or ""
         return s
 
@@ -846,9 +846,10 @@ class CodeBuddyStopController:
 class CodeBuddyStartBody(BaseModel):
     count: int = Field(default=1, ge=1, le=1000)
     region: Optional[str] = None
+    account_id: Optional[int] = None
 
 
-def _run_codebuddy_job(count: int, region: str) -> None:
+def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None) -> None:
     global _cb_controller
     controller = CodeBuddyStopController()
     with _cb_lock:
@@ -870,7 +871,7 @@ def _run_codebuddy_job(count: int, region: str) -> None:
         for i in range(count):
             if controller.should_stop():
                 break
-            account = _storage.get_next_for_codebuddy()
+            account = _storage.get_next_for_codebuddy(account_id)
             if account is None:
                 _log("[!] no more accounts available for CodeBuddy")
                 break
@@ -948,7 +949,7 @@ async def api_codebuddy_start(
             raise HTTPException(status_code=400, detail="router_url and router_password must be configured")
         t = threading.Thread(
             target=_run_codebuddy_job,
-            args=(body.count, body.region or cfg.codebuddy_region or ""),
+            args=(body.count, body.region or cfg.codebuddy_region or "", body.account_id),
             daemon=True,
         )
         _cb_thread = t
@@ -980,6 +981,14 @@ async def api_codebuddy_status(x_access_key: Optional[str] = Header(None)) -> Di
 async def api_codebuddy_accounts(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
     _require_auth(x_access_key)
     items = _storage.list_codebuddy_accounts()
+    return {"ok": True, "accounts": items, "total": len(items)}
+
+
+@app.get("/api/codebuddy/available-accounts")
+async def api_codebuddy_available_accounts(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """List GitHub accounts available for CodeBuddy registration (not yet registered)."""
+    _require_auth(x_access_key)
+    items = _storage.list_available_for_codebuddy()
     return {"ok": True, "accounts": items, "total": len(items)}
 
 
