@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react'
-import { Bot, Play, Square, RefreshCw, CheckCircle2, XCircle, Clock, Loader2 } from 'lucide-react'
+import { Bot, Play, Square, RefreshCw, CheckCircle2, XCircle, Loader } from 'lucide-react'
 import { api } from '../api.js'
 import { Badge, Button, Card, EmptyState } from './ui.jsx'
 
@@ -80,7 +80,7 @@ export default function CodeBuddyPanel() {
             <Bot size={20} style={{ color: 'var(--accent)' }} />
             <span style={styles.title}>CodeBuddy Registration</span>
             <Badge tone={s.running ? 'success' : 'muted'}>
-              {s.running ? <><Loader2 size={12} className="spin" /> Running</> : 'Idle'}
+              {s.running ? <><Loader size={12} className="spin" /> Running</> : 'Idle'}
             </Badge>
           </div>
           <Button size="sm" variant="ghost" onClick={() => { loadStatus(); loadAccounts() }}>
