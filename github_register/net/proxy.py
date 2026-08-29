@@ -140,19 +140,37 @@ class ProxyManager:
 
     # ------------------------------------------------------------ sticky port
 
-    def ensure_sticky(self) -> str:
-        """Switch a rotating gateway endpoint to a sticky one, or pass through.
+    # Ports that are known rotating endpoints (new IP per connection).
+    ROTATING_PORTS = (823, 824)
+    # Port 10000 is the default DataImpulse sticky endpoint, but reusing the
+    # same sticky port across accounts means the same exit IP is kept. We
+    # treat it as rotating so each account gets a fresh random sticky port.
+    STICKY_BUT_SHARED_PORTS = (10000,)
+    # Sticky port range (DataImpulse allocates a unique exit IP per port).
+    STICKY_PORT_MIN = 10000
+    STICKY_PORT_MAX = 20000
 
-        Rotating = port 823 (HTTP) / 824 (SOCKS5); sticky = ports
-        10000-20000. We pick a random sticky port per manager so each job
-        gets a fresh stable IP. The port is deterministic within the job.
+    def ensure_sticky(self) -> str:
+        """Switch a rotating/shared gateway endpoint to a unique sticky one.
+
+        Rotating = port 823/824 (new IP per TCP connection).
+        Shared-sticky = port 10000 (one IP for all accounts — bad for rotation).
+        Sticky = ports 10000-20000 (one stable IP per port, ~30 min lifetime).
+
+        For both rotating and shared-sticky, we pick a RANDOM sticky port
+        so each account/job gets a fresh exit IP. The port is deterministic
+        within the job (same port = same IP for the whole session).
         """
         p = urlsplit(self.proxy_url)
         port = p.port or 0
-        # only switch known rotating ports
-        if port in (823, 824):
+        should_rotate = port in self.ROTATING_PORTS or port in self.STICKY_BUT_SHARED_PORTS
+        if should_rotate:
             if self._sticky_suffix is None:
-                self._sticky_suffix = str(10000 + int(secrets.token_hex(4), 16) % 10001)
+                self._sticky_suffix = str(
+                    self.STICKY_PORT_MIN
+                    + int(secrets.token_hex(4), 16)
+                    % (self.STICKY_PORT_MAX - self.STICKY_PORT_MIN + 1)
+                )
                 self.log(
                     f"[*] sticky proxy port: {self._sticky_suffix}"
                     " (IP stabil ~30 menit, DataImpulse)"
@@ -162,7 +180,7 @@ class ProxyManager:
                 scheme = "socks5"
             auth = f"{p.username}:{p.password}@" if p.username else ""
             return f"{scheme}://{auth}{p.hostname}:{self._sticky_suffix}"
-        return self.proxy_url  # already sticky or non-gateway — untouched
+        return self.proxy_url  # already sticky (custom port) or non-gateway — untouched
 
     # ---------------------------------------------------------------- bridge
 

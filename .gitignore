@@ -68,3 +68,7 @@ temp_*.txt
 *.tmp
 .DS_Store
 
+.agents
+.claude
+.opencode
+_bmad

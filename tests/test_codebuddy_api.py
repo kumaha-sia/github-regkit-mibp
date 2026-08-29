@@ -154,6 +154,22 @@ def test_poll_cancel():
     assert result["error"] == "cancelled"
 
 
+def test_login_url_no_double_api():
+    """Ensure login URL is base_url + /auth/login (no double /api)."""
+    client = RouterClient("https://router.test/api", "secret")
+    captured_url = {}
+
+    mock_resp = _mock_response(200, {"ok": True}, cookies="tok")
+    def capture_post(url, *a, **kw):
+        captured_url["url"] = url
+        return mock_resp
+
+    with patch.object(client.session, "post", side_effect=capture_post):
+        client.login()
+    assert captured_url["url"] == "https://router.test/api/auth/login"
+    assert "/api/api/" not in captured_url["url"]
+
+
 if __name__ == "__main__":
     for name, fn in sorted((n, f) for n, f in globals().items() if n.startswith("test_")):
         fn()

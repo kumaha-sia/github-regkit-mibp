@@ -93,8 +93,19 @@ def detect_page(page) -> str:
 
 
 def _step1_agree_and_github(page, log, stop) -> None:
-    """Step 2: agree checkbox + click 'Sign up with GitHub'."""
+    """Step 2: agree checkbox + click 'Sign up with GitHub'.
+
+    CodeBuddy login page is a React SPA — the DOM is empty on
+    domcontentloaded and buttons appear only after JS finishes rendering.
+    We wait for networkidle + poll for the GitHub button with a generous
+    timeout.
+    """
     raise_if_cancelled(stop)
+    # SPA: wait for JS to finish loading + rendering
+    try:
+        page.wait_for_load_state("networkidle", timeout=30_000)
+    except Exception:
+        pass  # timeout — proceed anyway, button may still appear
     human_scroll(page, "down", 200)
     human_delay(1.0, 0.3, stop)
     # try clicking the agree checkbox first
@@ -105,9 +116,22 @@ def _step1_agree_and_github(page, log, stop) -> None:
         human_delay(0.5, 0.2, stop)
     except Exception:
         log("[i] no agree checkbox found — proceeding (may not be required)")
-    # click "Sign up with GitHub"
+    # click "Sign up with GitHub" — wait for the button to appear (SPA render)
     try:
-        btn = first(page, GITHUB_SIGNUP_BUTTON, visible=True)
+        # poll for any of the GitHub button selectors to appear
+        btn = None
+        deadline = 20  # seconds total
+        elapsed = 0
+        while elapsed < deadline:
+            raise_if_cancelled(stop)
+            try:
+                btn = first(page, GITHUB_SIGNUP_BUTTON, visible=True)
+                break
+            except Exception:
+                page.wait_for_timeout(1000)
+                elapsed += 1
+        if btn is None:
+            raise SignupError("GitHub signup button not found after 20s (SPA may not have rendered)")
         human_mouse_to_element(page, btn)
         human_delay(0.3, 0.15, stop)
         btn.click(timeout=10_000)
@@ -116,7 +140,7 @@ def _step1_agree_and_github(page, log, stop) -> None:
         # fallback: JS click
         clicked = page.evaluate(
             """() => {
-                const btns = [...document.querySelectorAll('button, a')];
+                const btns = [...document.querySelectorAll('button, a, [role="button"]')];
                 const btn = btns.find(b =>
                     b.offsetParent !== null && !b.disabled &&
                     /github/i.test((b.textContent || '').trim())
@@ -128,7 +152,13 @@ def _step1_agree_and_github(page, log, stop) -> None:
         if clicked:
             log("[*] 'Sign up with GitHub' clicked via DOM fallback")
         else:
-            raise SignupError(f"cannot click 'Sign up with GitHub': {exc}")
+            # dump page info for debugging
+            url = page.url
+            title = page.title()
+            raise SignupError(
+                f"cannot click 'Sign up with GitHub': {exc} "
+                f"(url={url}, title={title})"
+            )
     human_delay(2.0, 0.5, stop)
 
 
@@ -376,6 +406,11 @@ def codebuddy_register(
     try:
         raise_if_cancelled(stop)
         page.goto(verification_uri, wait_until="domcontentloaded", timeout=60_000)
+        # SPA: wait for JS to finish loading before looking for buttons
+        try:
+            page.wait_for_load_state("networkidle", timeout=30_000)
+        except Exception:
+            pass
         human_delay(2.0, 0.5, stop)
         _step1_agree_and_github(page, log, stop)
     except SignupError as exc:

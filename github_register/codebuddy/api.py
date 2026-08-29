@@ -44,7 +44,7 @@ class RouterClient:
 
     def login(self) -> str:
         """Step 1: authenticate with the router to get an auth_token cookie."""
-        url = f"{self.base_url}/api/auth/login"
+        url = f"{self.base_url}/auth/login"
         resp = self.session.post(
             url,
             json={"password": self.password},
@@ -79,7 +79,7 @@ class RouterClient:
         """
         if not self._auth_token:
             raise RouterError("must call login() before request_device_code()")
-        url = f"{self.base_url}/api/oauth/codebuddy-intl/device-code"
+        url = f"{self.base_url}/oauth/codebuddy-intl/device-code"
         resp = self.session.get(
             url,
             headers={
@@ -125,7 +125,7 @@ class RouterClient:
         """
         if not self._auth_token:
             raise RouterError("must call login() before poll()")
-        url = f"{self.base_url}/api/oauth/codebuddy-intl/poll"
+        url = f"{self.base_url}/oauth/codebuddy-intl/poll"
         body = {
             "deviceCode": device_code,
             "codeVerifier": code_verifier,

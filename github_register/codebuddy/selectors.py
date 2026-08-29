@@ -24,9 +24,17 @@ AGREE_CHECKBOX = [
 GITHUB_SIGNUP_BUTTON = [
     "button:has-text('Sign up with GitHub')",
     "a:has-text('Sign up with GitHub')",
+    "button:has-text('Sign Up with GitHub')",
+    "a:has-text('Sign Up with GitHub')",
+    "button:has-text('Sign up with GitHub')",
+    "a:has-text('Sign up with GitHub')",
     "button:has-text('GitHub')",
     "[data-provider='github']",
     "a:has-text('GitHub')",
+    "button:has(svg[class*='github'])",
+    "button:has(img[alt*='GitHub'])",
+    "a:has(img[alt*='GitHub'])",
+    "[role='button']:has-text('GitHub')",
 ]
 
 # "Log in" tab (when account already exists)

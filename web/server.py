@@ -310,6 +310,15 @@ async def root() -> Response:
     return Response("frontend not built: run `npm run build` in frontend/", status_code=200)
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon() -> Response:
+    return Response(
+        content='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#22D3EE" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/></svg>',
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/health")
 async def health() -> Dict[str, Any]:
     return {"ok": True, "service": "github-register"}

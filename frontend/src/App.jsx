@@ -101,6 +101,7 @@ export default function App() {
     log: LogViewer,
     config: ConfigPanel,
     accounts: AccountsPanel,
+    codebuddy: CodeBuddyPanel,
   }[tab];
   return (
     <div
