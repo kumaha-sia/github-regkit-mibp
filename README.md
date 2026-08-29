@@ -16,8 +16,10 @@ from the CLI or through a local web console.
 - Optionally creates a first repository, enables TOTP 2FA, and stores recovery
   codes per account.
 - Optionally sets a profile status and completes profile fields after 2FA.
+- Registers GitHub accounts on CodeBuddy via OAuth device-code flow
+  (router API, 2FA, region selection, sequential account rotation).
 - Provides a web console for configuration, job control, live logs, account
-  export, TOTP generation, and recovery-code viewing.
+  export, TOTP generation, recovery-code viewing, and CodeBuddy registration.
 
 ![Web console screenshot](result.png)
 
