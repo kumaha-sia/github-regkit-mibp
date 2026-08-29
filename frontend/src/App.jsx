@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import {
   Activity,
   BookOpenText,
+  Bot,
   Boxes,
   ExternalLink,
   Heart,
@@ -17,6 +18,7 @@ import StatusPanel from "./components/StatusPanel.jsx";
 import LogViewer from "./components/LogViewer.jsx";
 import ConfigPanel from "./components/ConfigPanel.jsx";
 import AccountsPanel from "./components/AccountsPanel.jsx";
+import CodeBuddyPanel from "./components/CodeBuddyPanel.jsx";
 import { Badge, Button, Card, Input, Spinner } from "./components/ui.jsx";
 
 const NAV = [
@@ -24,6 +26,7 @@ const NAV = [
   { id: "log", label: "Live Log", icon: BookOpenText },
   { id: "config", label: "Config", icon: Settings },
   { id: "accounts", label: "Accounts", icon: Boxes },
+  { id: "codebuddy", label: "CodeBuddy", icon: Bot },
 ];
 
 export default function App() {
