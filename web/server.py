@@ -36,6 +36,7 @@ from github_register.runner import run_job, silence_playwright_noise
 from github_register.storage.legacy_txt import export_accounts_txt, import_accounts_dir
 from github_register.storage.models import JobEvent
 from github_register.storage.sqlite import SqliteStorage
+from github_register.codebuddy.flow import codebuddy_register, CodeBuddyResult
 
 silence_playwright_noise()  # hide TargetClosedError spam when browsers close
 
@@ -803,6 +804,174 @@ async def api_accounts_download(
         media_type="text/plain; charset=utf-8",
         headers={"Cache-Control": "no-store", "Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# --- CodeBuddy job state --------------------------------------------------
+_cb_lock = threading.Lock()
+_cb_thread: Optional[threading.Thread] = None
+_cb_controller: Optional[Any] = None
+_cb_state: Dict[str, Any] = {
+    "running": False,
+    "current_email": "",
+    "step": "",
+    "success": 0,
+    "fail": 0,
+    "target": 0,
+    "error": "",
+    "started_at": None,
+    "finished_at": None,
+}
+
+
+class CodeBuddyStopController:
+    def __init__(self) -> None:
+        self._stop = False
+
+    def should_stop(self) -> bool:
+        return self._stop
+
+    def stop(self) -> None:
+        self._stop = True
+
+
+class CodeBuddyStartBody(BaseModel):
+    count: int = Field(default=1, ge=1, le=1000)
+    region: Optional[str] = None
+
+
+def _run_codebuddy_job(count: int, region: str) -> None:
+    global _cb_controller
+    controller = CodeBuddyStopController()
+    with _cb_lock:
+        _cb_controller = controller
+        _cb_state.update(
+            running=True, success=0, fail=0, target=count,
+            current_email="", step="", error="",
+            started_at=time.time(), finished_at=None,
+        )
+    cfg = load_config(ROOT / "config.json")
+    if region:
+        cfg.codebuddy_region = region
+    ok = fail = 0
+
+    def _log(msg: str) -> None:
+        _append_log(f"[CB] {msg}")
+
+    try:
+        for i in range(count):
+            if controller.should_stop():
+                break
+            account = _storage.get_next_for_codebuddy()
+            if account is None:
+                _log("[!] no more accounts available for CodeBuddy")
+                break
+            with _cb_lock:
+                _cb_state["current_email"] = account.email
+                _cb_state["step"] = "starting"
+            _log(f"--- CodeBuddy account {i+1}/{count}: {account.email} ---")
+
+            # launch browser
+            from camoufox.sync_api import Camoufox
+            from github_register.net.proxy import ProxyManager
+            from github_register.flow.session import browser_ctx_options, context_and_page
+            from github_register import proxy_health
+
+            pm = ProxyManager(getattr(cfg, "proxy", ""), log=_log)
+            proxy_health.init(_storage)
+            opts = browser_ctx_options(cfg, pm, log=_log)
+            try:
+                with Camoufox(**opts) as browser:
+                    context, page = context_and_page(browser)
+                    result: CodeBuddyResult = codebuddy_register(
+                        page, context, account, cfg, _log, controller.should_stop,
+                    )
+            except Exception as exc:
+                result = CodeBuddyResult(success=False, error=str(exc), step="browser")
+
+            if result.success:
+                _storage.add_codebuddy_account(
+                    account.id, result.connection_id or 0, result.region,
+                )
+                ok += 1
+                _log(f"[+] CodeBuddy registered: {account.email} (region={result.region})")
+            else:
+                fail += 1
+                _log(f"[-] CodeBuddy failed for {account.email}: {result.error} (step={result.step})")
+
+            with _cb_lock:
+                _cb_state["success"] = ok
+                _cb_state["fail"] = fail
+                _cb_state["step"] = result.step or "done"
+
+            if i + 1 < count and not controller.should_stop():
+                _sleep_with_cancel_cb(cfg.delay_sec, controller.should_stop)
+    except Exception as exc:
+        _log(f"[!] CodeBuddy job error: {exc}")
+        with _cb_lock:
+            _cb_state["error"] = str(exc)
+    finally:
+        with _cb_lock:
+            _cb_state["running"] = False
+            _cb_state["finished_at"] = time.time()
+            _cb_controller = None
+        _log("[*] CodeBuddy job finished")
+
+
+def _sleep_with_cancel_cb(seconds: float, stop_fn) -> None:
+    import time as _t
+    deadline = _t.time() + seconds
+    while _t.time() < deadline:
+        if stop_fn():
+            break
+        _t.sleep(min(0.25, max(0, deadline - _t.time())))
+
+
+@app.post("/api/codebuddy/start")
+async def api_codebuddy_start(
+    body: CodeBuddyStartBody, x_access_key: Optional[str] = Header(None)
+) -> Dict[str, Any]:
+    _require_auth(x_access_key)
+    with _cb_lock:
+        if _cb_state["running"]:
+            raise HTTPException(status_code=409, detail="CodeBuddy job already running")
+        cfg = load_config(ROOT / "config.json")
+        if not cfg.router_url or not cfg.router_password:
+            raise HTTPException(status_code=400, detail="router_url and router_password must be configured")
+        t = threading.Thread(
+            target=_run_codebuddy_job,
+            args=(body.count, body.region or cfg.codebuddy_region or ""),
+            daemon=True,
+        )
+        _cb_thread = t
+        t.start()
+    return {"ok": True, "started": True, "count": body.count}
+
+
+@app.post("/api/codebuddy/stop")
+async def api_codebuddy_stop(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    _require_auth(x_access_key)
+    with _cb_lock:
+        ctrl = _cb_controller
+        running = _cb_state["running"]
+    if not running or ctrl is None:
+        return {"ok": True, "stopped": False, "detail": "no running CodeBuddy job"}
+    ctrl.stop()
+    _append_log("[!] CodeBuddy stop requested")
+    return {"ok": True, "stopped": True}
+
+
+@app.get("/api/codebuddy/status")
+async def api_codebuddy_status(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    _require_auth(x_access_key)
+    with _cb_lock:
+        return {"ok": True, **_cb_state}
+
+
+@app.get("/api/codebuddy/accounts")
+async def api_codebuddy_accounts(x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    _require_auth(x_access_key)
+    items = _storage.list_codebuddy_accounts()
+    return {"ok": True, "accounts": items, "total": len(items)}
 
 
 if (DIST / "assets").is_dir():
