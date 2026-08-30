@@ -133,6 +133,7 @@ class ProxyManager:
         self.log = log or (lambda msg: None)
         self._sticky_suffix: Optional[str] = None
         self.exit_ip: Optional[str] = None
+        self.country: Optional[str] = None
         self._bridge: Optional[LocalAuthProxyBridge] = None
         # proxy list mode
         self._proxy_list: list[str] = []

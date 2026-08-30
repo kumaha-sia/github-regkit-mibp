@@ -97,6 +97,7 @@ def browser_ctx_options(
                 raise SignupError(f"IP {exit_ip} not in geoip database")
             opts["geoip"] = exit_ip
             proxy_manager.exit_ip = exit_ip  # consumed by trust-cookie IP binding
+            proxy_manager.country = country  # consumed by country dropdown selector
             if log:
                 log(f"[*] proxy exit IP: {exit_ip} (geoip pinned, sticky, country: {country})")
         except Exception as exc:

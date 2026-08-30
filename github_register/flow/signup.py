@@ -450,6 +450,19 @@ def fill_signup_form(page, cfg, email, password, log, stop) -> str:
     raise_if_rate_limited(page)
     human_random_pause(stop)
 
+    # select country if the new GitHub dropdown is present
+    try:
+        c_sel = page.locator("select[name='country'], select[name*='country'], select#country, #country")
+        if c_sel.count() and c_sel.first.is_visible():
+            from ..runner import _proxy_manager
+            country_code = getattr(_proxy_manager, "country", None)
+            if country_code:
+                c_sel.first.select_option(value=country_code.upper())
+                log(f"[*] selected country/region: {country_code.upper()}")
+                human_delay(0.8, 0.3, stop)
+    except Exception as exc:
+        log(f"[i] could not select country: {exc}")
+
     # 3s pause after username -> CLICK Create account -> on username error
     # append one digit and retry (name -> name2 -> name3 ...)
     return fill_and_create_account(
