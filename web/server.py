@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """FastAPI control plane for the GitHub register toolkit."""
 from __future__ import annotations
 
@@ -233,6 +233,8 @@ class ConfigBody(BaseModel):
     notify_token: Optional[str] = None
     router_url: Optional[str] = None
     router_password: Optional[str] = None
+    codebuddy_enabled: Optional[bool] = None
+    codebuddy_region: Optional[str] = None
     schedule_cron: Optional[str] = None
     schedule_count: Optional[int] = None
 
