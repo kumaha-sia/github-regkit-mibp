@@ -452,16 +452,31 @@ def fill_signup_form(page, cfg, email, password, log, stop) -> str:
 
     # select country if the new GitHub dropdown is present
     try:
-        c_sel = page.locator("select[name='country'], select[name*='country'], select#country, #country")
-        if c_sel.count() and c_sel.first.is_visible():
+        c_sel = page.locator("select[name='country'], select[name*='country'], select#country")
+        if c_sel.count():
             from ..runner import _proxy_manager
-            country_code = getattr(_proxy_manager, "country", None)
-            if country_code:
-                c_sel.first.select_option(value=country_code.upper())
-                log(f"[*] selected country/region: {country_code.upper()}")
-                human_delay(0.8, 0.3, stop)
+            target_country = getattr(_proxy_manager, "country", None)
+            if target_country:
+                target_country = target_country.upper()
+                current_val = str(c_sel.first.evaluate("el => el.value")).strip().upper()
+                
+                if current_val == target_country:
+                    log(f"[*] country already auto-detected by GitHub: {target_country}")
+                else:
+                    log(f"[*] country dropdown is '{current_val or 'empty'}', changing to '{target_country}'")
+                    try:
+                        # Attempt native playwright select first
+                        c_sel.first.select_option(value=target_country, timeout=2000)
+                    except Exception as e:
+                        # Fallback for hidden <select> behind custom Primer UI
+                        log(f"[i] native select failed (hidden?), using JS fallback")
+                        c_sel.first.evaluate(
+                            "(el, val) => { el.value = val; el.dispatchEvent(new Event('change', {bubbles: true})); }",
+                            target_country
+                        )
+                    human_delay(0.8, 0.3, stop)
     except Exception as exc:
-        log(f"[i] could not select country: {exc}")
+        log(f"[i] country selection skipped/failed: {exc}")
 
     # 3s pause after username -> CLICK Create account -> on username error
     # append one digit and retry (name -> name2 -> name3 ...)
