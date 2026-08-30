@@ -37,6 +37,7 @@ from .net.proxy import (
     validate_geoip as _validate_geoip,
 )
 from .browser.human import (
+    human_click as _human_click,
     human_delay as _human_delay,
     human_fill as _human_fill,
     human_mouse_to_element as _human_mouse_to_element,
@@ -228,6 +229,64 @@ def _post_form_flow(
     )
 
 
+def _simulate_human_activity(page, log, stop):
+    """Simulate human reading, starring a repo, and following a user to warm up the account."""
+    log("[*] starting human activity simulation (warm-up)")
+    try:
+        # Repos to star
+        repos = ["torvalds/linux", "microsoft/vscode", "facebook/react", "tensorflow/tensorflow"]
+        repo = random.choice(repos)
+        log(f"[*] human activity: visiting {repo}")
+        page.goto(f"https://github.com/{repo}", wait_until="domcontentloaded", timeout=30000)
+        _human_delay(1.5, 0.5, stop)
+        
+        # Scroll down and up a bit
+        _human_scroll(page, direction="down", distance=random.randint(200, 800))
+        _human_delay(1.0, 0.5, stop)
+        _human_scroll(page, direction="up", distance=random.randint(200, 800))
+        _human_delay(0.5, 0.5, stop)
+        
+        # Click the Star button (the primary "Star" button)
+        star_btn = _first(page, [
+            "form.unstarred button[aria-label^='Star']",
+            "button[value='Star']",
+            "button:has-text('Star')"
+        ], visible=True)
+        if star_btn:
+            _human_click(page, star_btn, stop)
+            log(f"[*] human activity: starred {repo}")
+        else:
+            log("[i] human activity: star button not found")
+            
+        _human_delay(2.0, 0.5, stop)
+
+        # Users to follow
+        users = ["torvalds", "defunkt", "mojombo", "gaearon", "yyx990803"]
+        user = random.choice(users)
+        log(f"[*] human activity: visiting profile {user}")
+        page.goto(f"https://github.com/{user}", wait_until="domcontentloaded", timeout=30000)
+        _human_delay(1.5, 0.5, stop)
+        
+        _human_scroll(page, direction="down", distance=random.randint(100, 500))
+        
+        # Click the Follow button
+        follow_btn = _first(page, [
+            "input[value='Follow']",
+            "button[aria-label^='Follow']",
+            "button:has-text('Follow')"
+        ], visible=True)
+        if follow_btn:
+            _human_click(page, follow_btn, stop)
+            log(f"[*] human activity: followed {user}")
+        else:
+            log("[i] human activity: follow button not found")
+
+        _human_delay(2.0, 0.5, stop)
+        log("[*] human activity simulation completed")
+    except Exception as exc:
+        log(f"[i] human activity simulation skipped/failed: {exc}")
+
+
 def _finalize_account(
     page, context, cfg: Config, email: str, username: str, log, stop
 ) -> tuple[str, str, str]:
@@ -254,6 +313,10 @@ def _finalize_account(
         _complete_profile(page, username, cfg, log)
     except Exception as exc:
         log(f"[i] profile stage skipped (account still saved): {exc}")
+        
+    # Phase: Human Activity Warm-up
+    _simulate_human_activity(page, log, stop)
+    
     _save_trust_cookie(context, _proxy_manager.exit_ip or "", log)  # persist DataDome trust
     return username, totp_secret, recovery
 
@@ -580,6 +643,7 @@ def run_job(
             log("[!] proxy_mode=list but no proxies found in file or config")
     else:
         _proxy_manager.set_proxy_list("")
+        _proxy_manager.proxy_url = cfg.proxy or ""
     job_id = storage.create(JobRecord(target=cfg.register_count))
     if job_id_cb is not None:
         try:

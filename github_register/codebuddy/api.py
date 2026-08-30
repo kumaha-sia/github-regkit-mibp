@@ -19,8 +19,6 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional
 
-import requests
-
 
 class RouterError(RuntimeError):
     pass
@@ -29,15 +27,11 @@ class RouterError(RuntimeError):
 class RouterClient:
     """Minimal HTTP client for the CodeBuddy router device-code flow."""
 
-    def __init__(self, base_url: str, password: str, log: Optional[Callable[[str], None]] = None):
+    def __init__(self, context, base_url: str, password: str, log: Optional[Callable[[str], None]] = None):
+        self.context = context
         self.base_url = (base_url or "").rstrip("/")
         self.password = password
         self.log = log or (lambda msg: None)
-        self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "X-Requested-With": "XMLHttpRequest",
-        })
         self._auth_token: Optional[str] = None
 
     # ------------------------------------------------------------------ auth
@@ -45,16 +39,22 @@ class RouterClient:
     def login(self) -> str:
         """Step 1: authenticate with the router to get an auth_token cookie."""
         url = f"{self.base_url}/auth/login"
-        resp = self.session.post(
+        resp = self.context.request.post(
             url,
-            json={"password": self.password},
+            data={"password": self.password},
             headers={"X-Domain": "www.codebuddy.ai", "X-No-Authorization": "***", "X-Product": "SaaS"},
-            timeout=15,
+            timeout=15000,
         )
         if not resp.ok:
-            raise RouterError(f"router login failed: HTTP {resp.status_code} {resp.text[:200]}")
-        # auth_token is set as a cookie
-        token = resp.cookies.get("auth_token", "")
+            raise RouterError(f"router login failed: HTTP {resp.status} {resp.text()[:200]}")
+        
+        token = ""
+        # Check context cookies first (automatically set by Set-Cookie)
+        for c in self.context.cookies():
+            if c.get("name") == "auth_token":
+                token = c.get("value", "")
+                break
+                
         if not token:
             # some routers return it in the JSON body
             try:
@@ -62,10 +62,17 @@ class RouterClient:
                 token = body.get("auth_token", "")
             except Exception:
                 pass
+                
         if not token:
             raise RouterError("router login succeeded but no auth_token returned")
+            
         self._auth_token = token
-        self.session.cookies.set("auth_token", token)
+        # If not set automatically (e.g. from JSON body), set it manually in context
+        self.context.add_cookies([{
+            "name": "auth_token",
+            "value": token,
+            "url": self.base_url
+        }])
         self.log("[*] router auth: login successful")
         return token
 
@@ -80,7 +87,7 @@ class RouterClient:
         if not self._auth_token:
             raise RouterError("must call login() before request_device_code()")
         url = f"{self.base_url}/oauth/codebuddy-intl/device-code"
-        resp = self.session.get(
+        resp = self.context.request.get(
             url,
             headers={
                 "Accept": "application/json",
@@ -88,15 +95,15 @@ class RouterClient:
                 "X-No-Authorization": "***",
                 "X-Product": "SaaS",
             },
-            timeout=15,
+            timeout=15000,
         )
         if not resp.ok:
             raise RouterError(
-                f"device-code request failed: HTTP {resp.status_code} {resp.text[:200]}"
+                f"device-code request failed: HTTP {resp.status} {resp.text()[:200]}"
             )
         try:
             data = resp.json()
-        except ValueError as exc:
+        except Exception as exc:
             raise RouterError(f"device-code response is not JSON: {exc}") from exc
         if not data.get("device_code") or not data.get("verification_uri"):
             raise RouterError(f"device-code response missing required fields: {data}")
@@ -139,15 +146,15 @@ class RouterClient:
                 return {"success": False, "error": "cancelled", "pending": False}
             attempt += 1
             try:
-                resp = self.session.post(
+                resp = self.context.request.post(
                     url,
-                    json=body,
+                    data=body,
                     headers={
                         "X-Domain": "www.codebuddy.ai",
                         "X-No-Authorization": "***",
                         "X-Product": "SaaS",
                     },
-                    timeout=15,
+                    timeout=15000,
                 )
                 if resp.ok:
                     data = resp.json()
@@ -167,9 +174,9 @@ class RouterClient:
                         # non-pending error = stop polling (e.g. expired_token, access_denied)
                         return {"success": False, "error": last_error, "pending": False}
                 else:
-                    last_error = f"HTTP {resp.status_code}"
-                    self.log(f"[!] poll {attempt}: HTTP {resp.status_code} {resp.text[:100]}")
-            except requests.RequestException as exc:
+                    last_error = f"HTTP {resp.status}"
+                    self.log(f"[!] poll {attempt}: HTTP {resp.status} {resp.text()[:100]}")
+            except Exception as exc:
                 last_error = str(exc)
                 self.log(f"[!] poll {attempt}: network error ({exc})")
             # wait for the next poll interval

@@ -91,12 +91,12 @@ def socks_exit_ip(url: str, timeout: int = 12) -> str:
     raise ProxyError(f"socks exit-IP lookup failed: {last_exc}")
 
 
-def validate_geoip(ip: str) -> bool:
+def validate_geoip(ip: str) -> Optional[str]:
     """Check if an IP is in a public geoip database (fast, no proxy needed).
 
     Browsers with fingerprint spoofing fail with 'IP not found in database'
     for obscure IP ranges. This pre-check avoids launching a browser that
-    will immediately error.
+    will immediately error. Returns the country code if found, else None.
     """
     for api in (
         f"https://ipapi.co/{ip}/json/",
@@ -107,11 +107,12 @@ def validate_geoip(ip: str) -> bool:
             if resp.ok:
                 data = resp.json()
                 # success = has country code
-                if data.get("country") or data.get("country_code"):
-                    return True
+                country = data.get("country_code") or data.get("country")
+                if country:
+                    return str(country)
         except Exception:
             continue
-    return False
+    return None
 
 
 class ProxyManager:

@@ -39,6 +39,7 @@ from ..browser.human import (
 from ..codebuddy.api import RouterClient, RouterError
 from ..codebuddy.selectors import (
     ACCOUNT_RESTRICTED_MARKERS,
+    ACCOUNT_SUSPENDED_MARKERS,
     AGREE_CHECKBOX,
     ALREADY_AUTHORIZED_MARKERS,
     APP_SUSPENDED_MARKERS,
@@ -101,6 +102,8 @@ def detect_page(page) -> str:
     check_url = f"{url} {iframe_url}".strip() if iframe_url else url
 
     if "github.com" in check_url:
+        if "/suspended" in check_url:
+            return "account_suspended"
         if "/sessions/two-factor" in check_url or "/2fa" in check_url:
             return "2fa"
         if "/login" in check_url and "oauth" not in check_url:
@@ -126,6 +129,8 @@ def detect_page(page) -> str:
         return "already_authorized"
     if any(m in text for m in APP_SUSPENDED_MARKERS):
         return "app_suspended"
+    if any(m in text for m in ACCOUNT_SUSPENDED_MARKERS):
+        return "account_suspended"
     if any(m in text for m in ACCOUNT_RESTRICTED_MARKERS):
         return "account_restricted"
     if any(m in text for m in PAGE_EXPIRED_MARKERS):
@@ -281,60 +286,36 @@ def _step1_agree_and_github(page, log, stop) -> None:
     # Step 1: Click the agree checkbox (#agree-policy-account)
     # The checkbox has display:none — it's hidden behind a custom <label class="custom-checkbox">
     # with a CSS checkmark. Playwright can't click display:none elements directly.
-    # We must click the parent <label> element, which toggles the checkbox via JS.
+    # We must click the parent <label> element natively to avoid bot detection.
     checkbox_clicked = False
     try:
-        if iframe_frame:
-            # Click the <label> wrapper, not the hidden checkbox
-            iframe_frame.evaluate(
-                """() => {
-                    const cb = document.querySelector('#agree-policy-account');
-                    if (cb) {
-                        const label = cb.closest('label') || cb.parentElement;
-                        if (label) label.click();
-                    }
-                }"""
-            )
-            human_delay(1.0, 0.2, stop)  # wait for JS to enable OAuth buttons
-            # Verify checkbox is checked
-            is_checked = iframe_frame.evaluate(
-                "() => { const cb = document.querySelector('#agree-policy-account'); return cb ? cb.checked : false; }"
-            )
-            if is_checked:
-                log("[*] agreement checkbox clicked (via label)")
-                checkbox_clicked = True
-            else:
-                log("[!] label click didn't check checkbox — trying direct dispatch")
-                raise Exception("checkbox not checked")
-        else:
-            log("[i] no iframe frame — skipping checkbox")
-    except Exception:
-        # Fallback: set checked + dispatch events
-        try:
-            if iframe_frame:
-                iframe_frame.evaluate(
-                    """() => {
-                        const cb = document.querySelector('#agree-policy-account');
-                        if (cb) {
-                            cb.checked = true;
-                            cb.dispatchEvent(new Event('change', {bubbles: true}));
-                            if (typeof handlePolicyChange === 'function') handlePolicyChange(cb);
-                        }
-                    }"""
-                )
+        if iframe_el:
+            # Locate the label containing the checkbox and use native Playwright click
+            # This generates trusted events and avoids DataDome/WAF detection.
+            label_loc = iframe_el.locator("label").filter(has=page.locator("#agree-policy-account")).first
+            if label_loc.count() == 0:
+                # Fallback: just find the label that's a sibling or near it
+                label_loc = iframe_el.locator("label[for='agree-policy-account']").first
+            
+            if label_loc.count() > 0:
+                label_loc.click(timeout=5000)
                 human_delay(1.0, 0.2, stop)
-                is_checked = iframe_frame.evaluate(
+                
+                # Verify checkbox is checked
+                is_checked = label_loc.evaluate(
                     "() => { const cb = document.querySelector('#agree-policy-account'); return cb ? cb.checked : false; }"
                 )
                 if is_checked:
-                    log("[*] agreement checkbox checked via JS dispatch")
+                    log("[*] agreement checkbox clicked natively")
                     checkbox_clicked = True
                 else:
-                    log("[i] checkbox JS dispatch failed — proceeding anyway")
+                    log("[!] native click didn't check checkbox")
             else:
-                log("[i] no iframe frame for JS fallback — proceeding")
-        except Exception as e:
-            log(f"[i] no agree checkbox: {e}")
+                log("[i] could not find label for checkbox")
+        else:
+            log("[i] no iframe frame — skipping checkbox")
+    except Exception as e:
+        log(f"[i] native agree checkbox click failed: {e}")
 
     # Wait for OAuth buttons to become enabled after checkbox click
     # (Keycloak enables them via JS when checkbox state changes)
@@ -746,7 +727,7 @@ def codebuddy_register(
     if not router_url or not router_password:
         return CodeBuddyResult(success=False, error="router_url/router_password not configured", step="api")
     try:
-        api = RouterClient(router_url, router_password, log=log)
+        api = RouterClient(context, router_url, router_password, log=log)
         api.login()
         dc = api.request_device_code()
     except RouterError as exc:
@@ -803,6 +784,11 @@ def codebuddy_register(
             break
         if state == "app_suspended":
             return CodeBuddyResult(success=False, error="CodeBuddy application suspended", step="authorize")
+        if state == "account_suspended":
+            log("[!] GitHub account has been suspended")
+            log("[i] The GitHub account was banned/suspended by GitHub's anti-fraud system.")
+            log("[i] This proxy IP is likely flagged or the account creation was detected.")
+            return CodeBuddyResult(success=False, error="GitHub account suspended", step="authorize")
         if state == "account_restricted":
             log("[!] CodeBuddy anti-fraud block — account access restricted")
             log("[i] This is NOT a code bug. CodeBuddy's anti-fraud system detected")

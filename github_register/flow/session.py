@@ -77,44 +77,45 @@ def browser_ctx_options(
             opts["proxy"] = proxy_manager.ensure_bridge(proxy_url) or proxy
         else:
             opts["proxy"] = proxy
-        if proxy_is_socks(proxy):
-            try:
-                exit_ip = socks_exit_ip(proxy_url)
-                # reject IPv6 — DataDome is stricter with IPv6, and Camoufox
-                # geoip works best with IPv4
-                if ":" in exit_ip:
-                    if log:
-                        log(f"[!] IPv6 exit IP detected ({exit_ip}) — rotating to get IPv4")
-                    proxy_manager.rotate()
-                    raise SignupError("IPv6 exit IP, need IPv4")
-                # validate IP is in a known geoip database (Camoufox will fail
-                # with "IP not found in database" for obscure ranges)
-                if not validate_geoip(exit_ip):
-                    if log:
-                        log(f"[!] IP {exit_ip} not in geoip database — rotating")
-                    proxy_manager.rotate()
-                    raise SignupError(f"IP {exit_ip} not in geoip database")
-                opts["geoip"] = exit_ip
-                proxy_manager.exit_ip = exit_ip  # consumed by trust-cookie IP binding
+        
+        try:
+            exit_ip = socks_exit_ip(proxy_url)
+            # reject IPv6 — DataDome is stricter with IPv6, and Camoufox
+            # geoip works best with IPv4
+            if ":" in exit_ip:
                 if log:
-                    log(f"[*] socks proxy exit IP: {exit_ip} (geoip pinned, sticky)")
-            except Exception as exc:
-                # re-raise so the caller (register_one) can retry with a new IP
-                if "IPv6 exit IP" in str(exc) or "not in geoip database" in str(exc):
-                    raise
-                # SSL/connection errors mean the proxy itself is broken — rotate
-                msg = str(exc).lower()
-                if "ssl" in msg or "wrong_version" in msg or "connection" in msg or "refused" in msg:
-                    if log:
-                        log(f"[!] proxy connection broken ({exc}) — rotating sticky port")
-                    proxy_manager.rotate()
-                    raise SignupError(f"proxy connection failed: {exc}")
-                opts["geoip"] = False
-                proxy_manager.exit_ip = None  # no IP to bind — do NOT restore stale cookies
+                    log(f"[!] IPv6 exit IP detected ({exit_ip}) — rotating to get IPv4")
+                proxy_manager.rotate()
+                raise SignupError("IPv6 exit IP, need IPv4")
+            # validate IP is in a known geoip database (Camoufox will fail
+            # with "IP not found in database" for obscure ranges)
+            country = validate_geoip(exit_ip)
+            if not country:
                 if log:
-                    log(f"[!] socks exit-IP lookup failed ({exc}); geoip disabled — "
-                        f"timezone/locale may mismatch the proxy country. "
-                        f"Trust cookie will NOT be restored (IP unknown).")
+                    log(f"[!] IP {exit_ip} not in geoip database — rotating")
+                proxy_manager.rotate()
+                raise SignupError(f"IP {exit_ip} not in geoip database")
+            opts["geoip"] = exit_ip
+            proxy_manager.exit_ip = exit_ip  # consumed by trust-cookie IP binding
+            if log:
+                log(f"[*] proxy exit IP: {exit_ip} (geoip pinned, sticky, country: {country})")
+        except Exception as exc:
+            # re-raise so the caller (register_one) can retry with a new IP
+            if "IPv6 exit IP" in str(exc) or "not in geoip database" in str(exc):
+                raise
+            # SSL/connection errors mean the proxy itself is broken — rotate
+            msg = str(exc).lower()
+            if "ssl" in msg or "wrong_version" in msg or "connection" in msg or "refused" in msg:
+                if log:
+                    log(f"[!] proxy connection broken ({exc}) — rotating sticky port")
+                proxy_manager.rotate()
+                raise SignupError(f"proxy connection failed: {exc}")
+            opts["geoip"] = False
+            proxy_manager.exit_ip = None  # no IP to bind — do NOT restore stale cookies
+            if log:
+                log(f"[!] proxy exit-IP lookup failed ({exc}); geoip disabled — "
+                    f"timezone/locale may mismatch the proxy country. "
+                    f"Trust cookie will NOT be restored (IP unknown).")
     if getattr(cfg, "fresh_profile", False):
         # fresh browser per account — no user_data_dir at all
         if log:

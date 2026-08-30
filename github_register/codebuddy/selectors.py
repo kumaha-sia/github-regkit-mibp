@@ -171,6 +171,12 @@ ALREADY_AUTHORIZED_MARKERS = (
 )
 
 # Application suspended / error
+ACCOUNT_SUSPENDED_MARKERS = (
+    "account has been suspended",
+    "account suspended",
+)
+
+# Application suspended / error
 APP_SUSPENDED_MARKERS = (
     "application suspended",
     "app suspended",
