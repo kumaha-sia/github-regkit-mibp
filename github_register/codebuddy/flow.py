@@ -574,20 +574,37 @@ def _step4_github_authorize(page, log, stop) -> None:
     raise_if_cancelled(stop)
     log("[*] GitHub OAuth authorize page detected")
     human_delay(1.0, 0.3, stop)
+    
+    # Wait for the button to appear in the DOM (the page might still be rendering)
+    deadline = time.time() + 15
+    btn = None
+    while time.time() < deadline:
+        raise_if_cancelled(stop)
+        try:
+            # first() raises SignupError if not found, so we catch it
+            btn = first(page, AUTHORIZE_BUTTON, visible=True)
+            break
+        except SignupError:
+            sleep_with_cancel(1, stop)
+            
     try:
-        btn = first(page, AUTHORIZE_BUTTON, visible=True)
+        if not btn:
+            raise SignupError("authorize button never appeared")
         human_mouse_to_element(page, btn)
         human_delay(0.3, 0.15, stop)
         btn.click(timeout=10_000)
         log("[*] Authorize clicked")
     except Exception as exc:
+        log(f"[i] native click failed ({exc}); trying DOM fallback")
         # fallback: JS click
         clicked = page.evaluate(
             """() => {
-                const form = document.querySelector("form[action*='authorize']");
-                if (!form) return false;
-                const btn = form.querySelector("input[type='submit'], button[type='submit']");
+                const btn = document.querySelector("#js-oauth-authorize-btn, button[name='authorize']");
                 if (btn && !btn.disabled) { btn.click(); return true; }
+                const form = document.querySelector("form[action*='authorize'], form[action*='oauth']");
+                if (!form) return false;
+                const fbtn = form.querySelector("input[type='submit'], button[type='submit']");
+                if (fbtn && !fbtn.disabled) { fbtn.click(); return true; }
                 return false;
             }"""
         )

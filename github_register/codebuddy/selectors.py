@@ -99,11 +99,14 @@ TWOFA_MORE_OPTIONS = [
 
 # "Authorize" button (green, grants access to the OAuth app)
 AUTHORIZE_BUTTON = [
+    "#js-oauth-authorize-btn",
+    "button[name='authorize']",
+    "form[action*='oauth'] button[type='submit']",
     "form[action*='authorize'] input[type='submit']",
     "form[action*='authorize'] button[type='submit']",
     "input[value='Authorize']",
     "button:has-text('Authorize')",
-    "button[name='authorize']",
+    "button:has-text('Authorize Tencent Cloud Code Assistant')"
 ]
 
 # "Cancel" button (fallback detection — we never click this)

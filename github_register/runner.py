@@ -253,7 +253,7 @@ def _simulate_human_activity(page, log, stop):
             "button:has-text('Star')"
         ], visible=True)
         if star_btn:
-            _human_click(page, star_btn, stop)
+            _human_click(page, star_btn)
             log(f"[*] human activity: starred {repo}")
         else:
             log("[i] human activity: star button not found")
@@ -276,7 +276,7 @@ def _simulate_human_activity(page, log, stop):
             "button:has-text('Follow')"
         ], visible=True)
         if follow_btn:
-            _human_click(page, follow_btn, stop)
+            _human_click(page, follow_btn)
             log(f"[*] human activity: followed {user}")
         else:
             log("[i] human activity: follow button not found")
