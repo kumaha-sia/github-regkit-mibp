@@ -317,6 +317,11 @@ def click_create_account(page, log, wait_enabled: int = 30, stop=None) -> None:
                 break
         except Exception:
             pass
+        
+        err = username_error(page)
+        if err:
+            raise SignupError(f"Create account stayed disabled because username is {err}")
+
         sleep_with_cancel(0.8, stop)
     if enabled:
         # an invisible/visible Octocaptcha overlay is often what eats the
@@ -362,7 +367,20 @@ def fill_and_create_account(page, base_username: str, tries: int, log, stop=None
         human_random_pause(stop)
         # scroll down to see the submit button (human behavior)
         human_scroll(page, "down", random.randint(50, 150))
-        click_create_account(page, log, stop=stop)
+        try:
+            click_create_account(page, log, stop=stop)
+        except SignupError as exc:
+            msg = str(exc)
+            if "because username is" in msg:
+                err = username_error(page)
+                if err == "taken":
+                    suffix = random.randint(100, 99999)
+                    log(f"[*] username {name} taken, retry with random digits ({attempt}/{tries}): +{suffix}")
+                    name = f"{base_username}{suffix}"
+                    continue
+                if err == "invalid":
+                    raise SignupError(f"username {name} rejected as invalid")
+            raise exc
 
         # wait for reaction: error under username field OR page moving forward
         deadline = time.time() + 15
@@ -373,8 +391,9 @@ def fill_and_create_account(page, base_username: str, tries: int, log, stop=None
             sleep_with_cancel(1, stop)
             err = username_error(page)
             if err == "taken":
-                log(f"[*] username {name} taken, retry with +1 digit ({attempt}/{tries})")
-                name = f"{base_username}{attempt + 1}"  # name2, name3, ...
+                suffix = random.randint(100, 99999)
+                log(f"[*] username {name} taken, retry with random digits ({attempt}/{tries}): +{suffix}")
+                name = f"{base_username}{suffix}"
                 reacted = True
                 break
             if err == "invalid":
