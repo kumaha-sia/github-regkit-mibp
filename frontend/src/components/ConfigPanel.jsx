@@ -45,6 +45,8 @@ const FIELDS = [
   { key: 'notify_token', label: 'Webhook token (Telegram chat_id / Bearer)', secret: true, group: 'Notifications', wide: true },
   { key: 'router_url', label: 'Router URL (blank = disabled)', group: 'Router', wide: true },
   { key: 'router_password', label: 'Router Password', secret: true, group: 'Router', wide: true },
+  { key: 'codebuddy_enabled', label: 'Auto-register CodeBuddy immediately after GitHub (Single Session)', type: 'checkbox', group: 'CodeBuddy Auto-Registration', wide: true },
+  { key: 'codebuddy_region', label: 'CodeBuddy Region (blank = auto)', group: 'CodeBuddy Auto-Registration', wide: true },
 ]
 
 // Group-level metadata: which column (kiri/kanan) di layout 2-kolom di layar lebar.
@@ -56,6 +58,7 @@ const GROUP_COLUMN = {
   'Registration': 'left',
   'Advanced': 'right',
   'Post-Signup Stages': 'right',
+  'CodeBuddy Auto-Registration': 'right',
   'Notifications': 'right',
   'Router': 'right',
 }

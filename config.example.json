@@ -32,7 +32,6 @@
   "router_password": "",
   "codebuddy_enabled": false,
   "codebuddy_region": "",
-  "codebuddy_single_session": false,
   "schedule_cron": "",
   "schedule_count": 0
 }

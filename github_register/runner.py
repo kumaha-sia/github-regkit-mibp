@@ -320,7 +320,7 @@ def _finalize_account(
     _save_trust_cookie(context, _proxy_manager.exit_ip or "", log)  # persist DataDome trust
 
     cb_result = None
-    if getattr(cfg, "codebuddy_single_session", False):
+    if getattr(cfg, "codebuddy_enabled", False):
         log("[*] Single Session Merging: running CodeBuddy registration...")
         try:
             from types import SimpleNamespace
