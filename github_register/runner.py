@@ -169,10 +169,10 @@ def _cancel_order(mail, order_id: str, log) -> None:
 def _post_form_flow(
     page, context, cfg: Config, email: str, password: str, username: str,
     mail, order_id: str, log, stop,
-) -> tuple[str, str, str]:
+) -> tuple[str, str, str, Any]:
     """Everything AFTER the signup form was accepted: email verification
     (launch code), auto-login, first repository (stage 4), TOTP 2FA (stage 5).
-    Returns (username, totp_secret, recovery_codes)."""
+    Returns (username, totp_secret, recovery_codes, cb_result)."""
     # after submit GitHub either shows the email verification (launch code)
     # page, or (high-trust sessions) logs straight in.
     state = _wait_post_submit(page, context, timeout=120, log=log, stop=stop)
@@ -210,12 +210,12 @@ def _post_form_flow(
         _raise_if_rate_limited(page)
         if _logged_in(context):
             log("[*] logged_in cookie confirmed — account is active")
-            return _finalize_account(page, context, cfg, email, username, log, stop)
+            return _finalize_account(page, context, cfg, email, password, username, log, stop)
         # GitHub sends fresh signups to /login: sign in with the new creds
         if "/login" in (page.url or ""):
             if _try_login(page, email, password, context, log):
                 log("[*] logged_in cookie confirmed after auto-login")
-                return _finalize_account(page, context, cfg, email, username, log, stop)
+                return _finalize_account(page, context, cfg, email, password, username, log, stop)
             raise SignupError("auto-login after signup failed")
         if _post_submit_state(page, context) == "pending":
             _sleep_with_cancel(2, stop)
@@ -288,11 +288,11 @@ def _simulate_human_activity(page, log, stop):
 
 
 def _finalize_account(
-    page, context, cfg: Config, email: str, username: str, log, stop
-) -> tuple[str, str, str]:
+    page, context, cfg: Config, email: str, password: str, username: str, log, stop
+) -> tuple[str, str, str, Any]:
     """Stages after the account is logged in: repo, 2FA, recovery, profile.
 
-    Returns (username, totp_secret, recovery_codes). Post-signup stage
+    Returns (username, totp_secret, recovery_codes, cb_result). Post-signup stage
     failures never discard an already-verified account — the reason is
     logged and the flow continues.
     """
@@ -318,7 +318,25 @@ def _finalize_account(
     _simulate_human_activity(page, log, stop)
     
     _save_trust_cookie(context, _proxy_manager.exit_ip or "", log)  # persist DataDome trust
-    return username, totp_secret, recovery
+
+    cb_result = None
+    if getattr(cfg, "codebuddy_single_session", False):
+        log("[*] Single Session Merging: running CodeBuddy registration...")
+        try:
+            from types import SimpleNamespace
+            from .codebuddy.flow import codebuddy_register
+            dummy_account = SimpleNamespace(
+                email=email,
+                password=password,
+                username=username,
+                totp_secret=totp_secret,
+                recovery_codes=recovery
+            )
+            cb_result = codebuddy_register(page, context, dummy_account, cfg, log, stop)
+        except Exception as exc:
+            log(f"[-] CodeBuddy Single Session crashed: {exc}")
+
+    return username, totp_secret, recovery, cb_result
 
 
 def _run_signup(
@@ -329,8 +347,8 @@ def _run_signup(
     order_id: str,
     log,
     stop,
-) -> tuple[str, str]:
-    """Run the whole sign-up; returns (username, totp).
+) -> tuple[str, str, str, Any]:
+    """Run the whole sign-up; returns (username, totp, recovery, cb_result).
 
     GitHub's signup is now a SINGLE page: Email* / Password* / Username* in one
     form (action=/signup?social=false), submit = "Create account" button.
@@ -493,7 +511,7 @@ def register_one(
         while True:
             _raise_if_cancelled(stop)
             try:
-                username, totp_secret, recovery = _run_signup(
+                username, totp_secret, recovery, cb_result = _run_signup(
                     cfg, email, password, mail, order_id, log, stop
                 )
                 break
@@ -552,10 +570,12 @@ def register_one(
                 _sleep_with_cancel(8, stop)
         # Recovery codes ride on the record; the legacy 5th marker (has_recovery)
         # is derived at export time, not stored in the flow layer.
-        return AccountRecord(
+        record = AccountRecord(
             email=email, username=username, password=password,
             totp_secret=totp_secret, recovery_codes=recovery,
         )
+        record.cb_result = cb_result
+        return record
     except KeyboardInterrupt:
         raise
     except RegistrationCancelled:
@@ -679,9 +699,19 @@ def run_job(
             if record is not None:
                 record.job_id = job_id
                 try:
-                    storage.add(record)  # single source of truth (encrypted columns)
+                    account_id = storage.add(record)  # single source of truth (encrypted columns)
+                    record.id = account_id
                     ok += 1
                     log(f"[+] {record.email} saved to database")
+
+                    cb_result = getattr(record, "cb_result", None)
+                    if cb_result and cb_result.success:
+                        storage.add_codebuddy_account(
+                            account_id, cb_result.connection_id or 0, cb_result.region
+                        )
+                        log(f"[+] CodeBuddy Single Session registered: {record.email} (region={cb_result.region})")
+                    elif cb_result:
+                        log(f"[-] CodeBuddy Single Session failed for {record.email}: {cb_result.error}")
                 except Exception as exc:
                     fail += 1
                     log(f"[!] save failed for {record.email}: {exc}")
