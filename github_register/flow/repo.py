@@ -61,7 +61,34 @@ def create_repository(page, username: str, base_name: str, log) -> str:
     Returns the repository name created.
     """
     name = base_name or "hello"
-    page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
+    
+    # Human UI navigation instead of direct URL
+    try:
+        from ..browser.human import first, human_delay, human_mouse_to_element
+        new_btn = first(page, [
+            "a[href='/new']",
+            "a[data-hydro-click*='NEW_REPOSITORY_BUTTON']"
+        ], visible=True)
+        if new_btn:
+            log("[*] navigating to /new via 'Create repository' link")
+            human_mouse_to_element(page, new_btn)
+            human_delay(0.8, 0.3)
+            new_btn.click(timeout=15_000)
+        else:
+            log("[i] 'Create repository' link not found, attempting Global Create Menu (+)")
+            plus = first(page, ["button[aria-label='Create new…']", "summary[aria-label='Create new…']"], visible=True)
+            human_mouse_to_element(page, plus)
+            human_delay(0.5, 0.2)
+            plus.click()
+            human_delay(1.0, 0.3)
+            new_repo_link = first(page, ["a[href='/new']"], visible=True)
+            human_mouse_to_element(page, new_repo_link)
+            human_delay(0.5, 0.2)
+            new_repo_link.click(timeout=15_000)
+    except Exception as exc:
+        log(f"[i] UI navigation failed ({exc}), falling back to direct URL")
+        page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
+
     # try multiple selectors — GitHub may have changed the repo name input
     inp = None
     for sel in _REPO_NAME_SELECTORS:
@@ -103,9 +130,9 @@ def create_repository(page, username: str, base_name: str, log) -> str:
         if "already exists" in err and "/new" in url:
             log(f"[*] repo {name} exists, retry with suffix")
             name = f"{base_name}{int(time.time()) % 10000}"
-            page.goto("https://github.com/new", wait_until="domcontentloaded", timeout=60_000)
-            page.wait_for_selector("#repository-name-input", state="visible", timeout=20_000)
-            page.locator("#repository-name-input").first.fill(name)
+            inp.fill("")
+            time.sleep(0.5)
+            inp.fill(name)
             time.sleep(1.5)
             _submit(page, log)
         time.sleep(1)

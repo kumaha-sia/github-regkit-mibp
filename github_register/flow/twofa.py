@@ -101,25 +101,60 @@ def enable_2fa(page, log) -> tuple[str, str]:
       recovery codes' → Done.
     """
     import pyotp
-
-    page.goto("https://github.com/settings/security", wait_until="domcontentloaded", timeout=60_000)
+    from ..browser.human import first, human_delay, human_mouse_to_element
+    
+    # Human UI navigation to settings
     try:
+        # Avatar dropdown
+        avatar = first(page, [
+            "button[aria-label='Open user account menu']", 
+            "summary[aria-label='View profile and more']",
+            "img.avatar-user"
+        ], visible=True)
+        human_mouse_to_element(page, avatar)
+        human_delay(0.5, 0.2)
+        avatar.click()
+        human_delay(1.5, 0.5)
+        
+        # Click "Settings"
+        settings_link = first(page, ["a[href='/settings/profile']", "a:has-text('Settings')"], visible=True)
+        human_mouse_to_element(page, settings_link)
+        human_delay(0.5, 0.2)
+        settings_link.click(timeout=15_000)
+        
+        # Click "Password and authentication"
+        sec_link = first(page, ["a[href='/settings/security']", "a:has-text('Password and authentication')"], visible=True)
+        human_mouse_to_element(page, sec_link)
+        human_delay(0.5, 0.2)
+        sec_link.click(timeout=15_000)
+        
         page.wait_for_selector("#settings-frame", state="visible", timeout=30_000)
-    except Exception:
-        raise SignupError(f"security settings page failed; url={page.url}")
+    except Exception as exc:
+        log(f"[i] UI navigation to settings failed ({exc}), falling back to direct URL")
+        page.goto("https://github.com/settings/security", wait_until="domcontentloaded", timeout=60_000)
 
-    # 'Enable two-factor authentication' is an <a href> link (NOT a button):
-    # /settings/two_factor_authentication/setup/intro — navigate straight to it.
+    # Click 'Enable two-factor authentication'
     # NOTE: GitHub REGENERATES the TOTP secret on every load of this page, so
     # read the secret only from the page we actually fill the code into.
     try:
-        with page.expect_navigation(wait_until="domcontentloaded", timeout=30_000):
-            page.goto(
-                "https://github.com/settings/two_factor_authentication/setup/intro",
-                wait_until="domcontentloaded", timeout=60_000,
-            )
-    except Exception:
-        pass  # already on the page; proceed
+        enable_btn = first(page, [
+            "a[href='/settings/two_factor_authentication/setup/intro']",
+            "a:has-text('Enable two-factor authentication')"
+        ], visible=True)
+        human_mouse_to_element(page, enable_btn)
+        human_delay(0.5, 0.2)
+        enable_btn.click(timeout=15_000)
+        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    except Exception as exc:
+        log(f"[i] UI click for 2FA enable failed ({exc}), falling back to direct URL")
+        try:
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=30_000):
+                page.goto(
+                    "https://github.com/settings/two_factor_authentication/setup/intro",
+                    wait_until="domcontentloaded", timeout=60_000,
+                )
+        except Exception:
+            pass  # already on the page; proceed
 
     # wait for the setup wizard — try multiple selectors (GitHub may have changed DOM)
     wizard_loaded = False

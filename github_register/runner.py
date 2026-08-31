@@ -232,12 +232,50 @@ def _post_form_flow(
 def _simulate_human_activity(page, log, stop):
     """Simulate human reading, starring a repo, and following a user to warm up the account."""
     log("[*] starting human activity simulation (warm-up)")
+    
+    def _search_nav(query: str):
+        try:
+            search_btn = _first(page, [
+                "button.header-search-button",
+                "button[aria-label^='Search']",
+                "input.header-search-input"
+            ], visible=True)
+            _human_mouse_to_element(page, search_btn)
+            _human_delay(0.5, 0.2, stop)
+            search_btn.click()
+            _human_delay(1.0, 0.5, stop)
+            
+            inp = _first(page, ["#query-builder-test", "input.header-search-input", "input[aria-label*='Search']"], visible=True)
+            inp.fill("")
+            _human_delay(0.2, 0.1, stop)
+            _human_fill(page, ["#query-builder-test", "input.header-search-input", "input[aria-label*='Search']"], query, stop=stop)
+            _human_delay(1.5, 0.5, stop) # Wait for suggestions dropdown
+            inp.press("Enter")
+            
+            # Wait for navigation. If it lands on search results, click the first repository/user
+            page.wait_for_load_state("domcontentloaded", timeout=15000)
+            _human_delay(1.0, 0.5, stop)
+            
+            if "search?" in page.url:
+                res = _first(page, [
+                    "div[data-testid='results-list'] a",
+                    "ul.repo-list a",
+                    ".search-title a"
+                ], visible=True)
+                _human_mouse_to_element(page, res)
+                _human_delay(0.5, 0.2, stop)
+                res.click()
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception as exc:
+            log(f"[i] Search UI failed ({exc}), falling back to goto")
+            page.goto(f"https://github.com/{query}", wait_until="domcontentloaded", timeout=30000)
+
     try:
         # Repos to star
         repos = ["torvalds/linux", "microsoft/vscode", "facebook/react", "tensorflow/tensorflow"]
         repo = random.choice(repos)
-        log(f"[*] human activity: visiting {repo}")
-        page.goto(f"https://github.com/{repo}", wait_until="domcontentloaded", timeout=30000)
+        log(f"[*] human activity: searching for repo {repo}")
+        _search_nav(repo)
         _human_delay(1.5, 0.5, stop)
         
         # Scroll down and up a bit
@@ -263,8 +301,8 @@ def _simulate_human_activity(page, log, stop):
         # Users to follow
         users = ["torvalds", "defunkt", "mojombo", "gaearon", "yyx990803"]
         user = random.choice(users)
-        log(f"[*] human activity: visiting profile {user}")
-        page.goto(f"https://github.com/{user}", wait_until="domcontentloaded", timeout=30000)
+        log(f"[*] human activity: searching for profile {user}")
+        _search_nav(user)
         _human_delay(1.5, 0.5, stop)
         
         _human_scroll(page, direction="down", distance=random.randint(100, 500))

@@ -174,7 +174,29 @@ def complete_profile(page, username: str, cfg: Config, log) -> None:
         # Avoid external APIs entirely when every profile field is configured.
         profile = fetch_public_profile() if not all(custom.values()) else {}
         profile = {key: custom[key] or profile[key] for key in custom}
-    page.goto(f"https://github.com/{username}", wait_until="domcontentloaded", timeout=60_000)
+    try:
+        from ..browser.human import first, human_delay, human_mouse_to_element
+        avatar = first(page, [
+            "button[aria-label='Open user account menu']", 
+            "summary[aria-label='View profile and more']",
+            "img.avatar-user"
+        ], visible=True)
+        human_mouse_to_element(page, avatar)
+        human_delay(0.5, 0.2)
+        avatar.click()
+        human_delay(1.5, 0.5)
+        
+        profile_link = first(page, [
+            f"a[href='/{username}']", 
+            "a:has-text('Your profile')"
+        ], visible=True)
+        human_mouse_to_element(page, profile_link)
+        human_delay(0.5, 0.2)
+        profile_link.click(timeout=15_000)
+        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    except Exception as exc:
+        log(f"[i] UI navigation to profile failed ({exc}), falling back to direct URL")
+        page.goto(f"https://github.com/{username}", wait_until="domcontentloaded", timeout=60_000)
 
     if cfg.set_profile_status:
         status = cfg.profile_status.strip() or "On vacation"
