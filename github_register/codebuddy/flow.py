@@ -210,7 +210,7 @@ def _step1_agree_and_github(page, log, stop) -> None:
         iframe_el = page.frame_locator("iframe").first  # fallback
 
     # Wait for the iframe content to render (Keycloak form + OAuth buttons)
-    deadline = 30  # seconds total
+    deadline = 90  # seconds total (slow proxies take a long time to load Codebuddy JS)
     elapsed = 0
     iframe_ready = False
     while elapsed < deadline:
@@ -250,11 +250,11 @@ def _step1_agree_and_github(page, log, stop) -> None:
             try:
                 log("[*] codebuddy: reloading verification page...")
                 page._cb_reloaded = True
-                page.reload(wait_until="networkidle", timeout=30_000)
+                page.reload(wait_until="domcontentloaded", timeout=60_000)
                 human_delay(3.0, 0.5, stop)
                 # Re-check iframe after reload
                 iframe_el = page.frame_locator("iframe").first
-                for _ in range(10):
+                for _ in range(30):
                     try:
                         btn_count = iframe_el.locator(GITHUB_SIGNUP_BUTTON[0]).count()
                         if btn_count > 0:
@@ -266,7 +266,7 @@ def _step1_agree_and_github(page, log, stop) -> None:
                     page.wait_for_timeout(1000)
                 if not iframe_ready:
                     raise SignupError(
-                        "CodeBuddy iframe did not load after 30s + reload — "
+                        f"CodeBuddy iframe did not load after {deadline}s + reload — "
                         "page may show captcha, error, or anti-bot challenge"
                     )
             except SignupError:
