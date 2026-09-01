@@ -40,16 +40,20 @@ def _set_status(page, status: str, log) -> None:
         "summary:has-text('status')",
     ]
     launcher_opened = False
-    for sel in launcher_selectors:
-        try:
-            loc = page.locator(sel).first
-            if loc.count() and loc.is_visible():
-                loc.click(timeout=5000)
-                launcher_opened = True
-                log(f"[*] profile status launcher clicked: {sel}")
-                break
-        except Exception:
-            continue
+    deadline = time.time() + 10
+    while time.time() < deadline and not launcher_opened:
+        for sel in launcher_selectors:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() and loc.is_visible():
+                    loc.click(timeout=5000)
+                    launcher_opened = True
+                    log(f"[*] profile status launcher clicked: {sel}")
+                    break
+            except Exception:
+                continue
+        if not launcher_opened:
+            time.sleep(1)
     if not launcher_opened:
         launcher_opened = _visible_dom_click(
             page,

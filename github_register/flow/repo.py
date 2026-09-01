@@ -64,11 +64,11 @@ def create_repository(page, username: str, base_name: str, log) -> str:
     
     # Human UI navigation instead of direct URL
     try:
-        from ..browser.human import first, human_delay, human_mouse_to_element
-        new_btn = first(page, [
+        from ..browser.human import wait_for_first, human_delay, human_mouse_to_element
+        new_btn = wait_for_first(page, [
             "a[href='/new']",
             "a[data-hydro-click*='NEW_REPOSITORY_BUTTON']"
-        ], visible=True)
+        ], visible=True, timeout=15000)
         if new_btn:
             log("[*] navigating to /new via 'Create repository' link")
             human_mouse_to_element(page, new_btn)
@@ -76,12 +76,12 @@ def create_repository(page, username: str, base_name: str, log) -> str:
             new_btn.click(timeout=15_000)
         else:
             log("[i] 'Create repository' link not found, attempting Global Create Menu (+)")
-            plus = first(page, ["button[aria-label='Create new…']", "summary[aria-label='Create new…']"], visible=True)
+            plus = wait_for_first(page, ["button[aria-label='Create new…']", "summary[aria-label='Create new…']"], visible=True, timeout=10000)
             human_mouse_to_element(page, plus)
             human_delay(0.5, 0.2)
             plus.click()
             human_delay(1.0, 0.3)
-            new_repo_link = first(page, ["a[href='/new']"], visible=True)
+            new_repo_link = wait_for_first(page, ["a[href='/new']"], visible=True, timeout=10000)
             human_mouse_to_element(page, new_repo_link)
             human_delay(0.5, 0.2)
             new_repo_link.click(timeout=15_000)

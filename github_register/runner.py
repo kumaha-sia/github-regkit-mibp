@@ -45,6 +45,7 @@ from .browser.human import (
     human_scroll as _human_scroll,
     page_text as _page_text,
     first as _first,
+    wait_for_first as _wait_for_first,
     fill as _fill,
     raise_if_cancelled as _raise_if_cancelled,
     sleep_with_cancel as _sleep_with_cancel,
@@ -235,17 +236,17 @@ def _simulate_human_activity(page, log, stop):
     
     def _search_nav(query: str):
         try:
-            search_btn = _first(page, [
+            search_btn = _wait_for_first(page, [
                 "button.header-search-button",
                 "button[aria-label^='Search']",
                 "input.header-search-input"
-            ], visible=True)
+            ], visible=True, timeout=15000)
             _human_mouse_to_element(page, search_btn)
             _human_delay(0.5, 0.2, stop)
             search_btn.click()
             _human_delay(1.0, 0.5, stop)
             
-            inp = _first(page, ["#query-builder-test", "input.header-search-input", "input[aria-label*='Search']"], visible=True)
+            inp = _wait_for_first(page, ["#query-builder-test", "input.header-search-input", "input[aria-label*='Search']"], visible=True, timeout=10000)
             inp.fill("")
             _human_delay(0.2, 0.1, stop)
             _human_fill(page, ["#query-builder-test", "input.header-search-input", "input[aria-label*='Search']"], query, stop=stop)
@@ -257,11 +258,11 @@ def _simulate_human_activity(page, log, stop):
             _human_delay(1.0, 0.5, stop)
             
             if "search?" in page.url:
-                res = _first(page, [
+                res = _wait_for_first(page, [
                     "div[data-testid='results-list'] a",
                     "ul.repo-list a",
                     ".search-title a"
-                ], visible=True)
+                ], visible=True, timeout=10000)
                 _human_mouse_to_element(page, res)
                 _human_delay(0.5, 0.2, stop)
                 res.click()

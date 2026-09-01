@@ -101,29 +101,29 @@ def enable_2fa(page, log) -> tuple[str, str]:
       recovery codes' → Done.
     """
     import pyotp
-    from ..browser.human import first, human_delay, human_mouse_to_element
+    from ..browser.human import wait_for_first, human_delay, human_mouse_to_element
     
     # Human UI navigation to settings
     try:
         # Avatar dropdown
-        avatar = first(page, [
+        avatar = wait_for_first(page, [
             "button[aria-label='Open user account menu']", 
             "summary[aria-label='View profile and more']",
             "img.avatar-user"
-        ], visible=True)
+        ], visible=True, timeout=15000)
         human_mouse_to_element(page, avatar)
         human_delay(0.5, 0.2)
         avatar.click()
         human_delay(1.5, 0.5)
         
         # Click "Settings"
-        settings_link = first(page, ["a[href='/settings/profile']", "a:has-text('Settings')"], visible=True)
+        settings_link = wait_for_first(page, ["a[href='/settings/profile']", "a:has-text('Settings')"], visible=True, timeout=10000)
         human_mouse_to_element(page, settings_link)
         human_delay(0.5, 0.2)
         settings_link.click(timeout=15_000)
         
         # Click "Password and authentication"
-        sec_link = first(page, ["a[href='/settings/security']", "a:has-text('Password and authentication')"], visible=True)
+        sec_link = wait_for_first(page, ["a[href='/settings/security']", "a:has-text('Password and authentication')"], visible=True, timeout=10000)
         human_mouse_to_element(page, sec_link)
         human_delay(0.5, 0.2)
         sec_link.click(timeout=15_000)
@@ -137,10 +137,10 @@ def enable_2fa(page, log) -> tuple[str, str]:
     # NOTE: GitHub REGENERATES the TOTP secret on every load of this page, so
     # read the secret only from the page we actually fill the code into.
     try:
-        enable_btn = first(page, [
+        enable_btn = wait_for_first(page, [
             "a[href='/settings/two_factor_authentication/setup/intro']",
             "a:has-text('Enable two-factor authentication')"
-        ], visible=True)
+        ], visible=True, timeout=10000)
         human_mouse_to_element(page, enable_btn)
         human_delay(0.5, 0.2)
         enable_btn.click(timeout=15_000)
@@ -185,25 +185,32 @@ def enable_2fa(page, log) -> tuple[str, str]:
 
     # read the TOTP secret — try multiple selectors and patterns
     secret = ""
-    for sel in _SECRET_SELECTORS:
-        try:
-            txt = page.locator(sel).first.inner_text(timeout=3000) or ""
-            txt = txt.strip().replace(" ", "")
-            if txt and len(txt) >= 16 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" for c in txt.upper()):
-                secret = txt
-                log(f"[*] TOTP secret found via: {sel}")
-                break
-        except Exception:
-            continue
-    if not secret:
-        # fallback: scan page HTML for a base32-looking secret (16-32 chars)
-        try:
-            body = page.content()
-        except Exception:
-            body = ""
-        m = _BASE32_RE.search(body or "")
-        if m:
-            secret = m.group(1)
+    deadline = time.time() + 15
+    while time.time() < deadline and not secret:
+        for sel in _SECRET_SELECTORS:
+            try:
+                txt = page.locator(sel).first.inner_text(timeout=1000) or ""
+                txt = txt.strip().replace(" ", "").replace("-", "")
+                if txt and len(txt) >= 16 and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=" for c in txt.upper()):
+                    secret = txt.upper()
+                    log(f"[*] TOTP secret found via: {sel}")
+                    break
+            except Exception:
+                continue
+        if not secret:
+            # fallback: scan page HTML for a base32-looking secret (16-32 chars)
+            try:
+                body = page.content()
+                m = _BASE32_RE.search(body or "")
+                if m:
+                    secret = m.group(1).upper()
+                    log(f"[*] TOTP secret found via HTML regex fallback")
+                    break
+            except Exception:
+                pass
+        if not secret:
+            time.sleep(1)
+            
     if not secret or len(secret) < 16:
         raise SignupError(f"TOTP secret not found (got {secret!r})")
     log(f"[*] TOTP secret captured: {secret}")

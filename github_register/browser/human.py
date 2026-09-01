@@ -109,7 +109,7 @@ def human_click(page, locator, timeout: int = 10000) -> None:
 
 
 def first(page, selectors: list[str], visible: bool = False):
-    """First locator matching any of the selectors (optionally visible)."""
+    """First locator matching any of the selectors (optionally visible) IMMEDIATELY."""
     from ..errors import SignupError
 
     for sel in selectors:
@@ -123,6 +123,22 @@ def first(page, selectors: list[str], visible: bool = False):
             continue
     raise SignupError(f"no visible element matching {selectors}")
 
+def wait_for_first(page, selectors: list[str], visible: bool = False, timeout: int = 15000):
+    """Wait and poll until one of the selectors matches (and optionally is visible)."""
+    from ..errors import SignupError
+    import time
+    
+    deadline = time.time() + (timeout / 1000.0)
+    while time.time() < deadline:
+        for sel in selectors:
+            try:
+                loc = page.locator(sel).first
+                if loc.count() > 0 and (not visible or loc.is_visible()):
+                    return loc
+            except Exception:
+                pass
+        time.sleep(0.5)
+    raise SignupError(f"timed out waiting for any of {selectors}")
 
 def first_in_frame(frame_locator, selectors: list[str], visible: bool = False):
     """First locator matching any selector **inside a Playwright FrameLocator**.
