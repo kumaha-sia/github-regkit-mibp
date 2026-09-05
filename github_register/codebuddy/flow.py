@@ -658,11 +658,27 @@ def _step3c_github_trusted_device(page, log, stop) -> None:
     
     # Try native Playwright clicks first (trusted events, bypasses Turbo.js restrictions)
     try:
-        # Avoid just 'skip' as it matches GitHub's hidden 'Skip to content' accessibility link
-        dont_ask = page.locator("button, a, summary").filter(has_text=re.compile(r"Don't ask again for this browser|Ask me later|Not now|No thanks", re.IGNORECASE)).first
-        if dont_ask.count() > 0 and dont_ask.is_visible(timeout=1000):
-            dont_ask.click()
+        # get_by_role('button') covers <button>, <input type="submit">, <input type="button">
+        btn = page.get_by_role("button", name=re.compile(r"Don't ask again for this browser|Ask me later|Not now|No thanks", re.IGNORECASE)).first
+        if btn.count() > 0 and btn.is_visible(timeout=1000):
+            btn.click()
             clicked = True
+            
+        if not clicked:
+            # Fallback for exact input values just in case
+            for val in ["Ask me later", "Don't ask again for this browser", "Not now"]:
+                inp = page.locator(f"input[type='submit'][value='{val}']").first
+                if inp.count() > 0 and inp.is_visible(timeout=1000):
+                    inp.click()
+                    clicked = True
+                    break
+                    
+        if not clicked:
+            # Fallback using get_by_text which ignores element type completely
+            txt_btn = page.get_by_text(re.compile(r"Don't ask again for this browser|Ask me later|Not now|No thanks", re.IGNORECASE)).first
+            if txt_btn.count() > 0 and txt_btn.is_visible(timeout=1000):
+                txt_btn.click()
+                clicked = True
     except Exception as exc:
         log(f"[i] Native click failed: {exc}")
 
@@ -671,11 +687,13 @@ def _step3c_github_trusted_device(page, log, stop) -> None:
         try:
             clicked = page.evaluate(
                 f"""() => {{
-                    const els = [...document.querySelectorAll('button, a, summary')];
-                    const skip = els.find(e => 
-                        e.offsetParent !== null && 
-                        /don't ask again|not now|ask me later|no thanks/i.test(e.textContent.trim())
-                    );
+                    const els = [...document.querySelectorAll('button, a, summary, input[type="submit"], input[type="button"]')];
+                    const skip = els.find(e => {{
+                        if (e.offsetParent === null) return false;
+                        const text = (e.textContent || e.value || "").trim();
+                        if (/skip to content/i.test(text)) return false;
+                        return /don't ask again|not now|ask me later|no thanks/i.test(text);
+                    }});
                     if (skip) {{ skip.click(); return true; }}
                     return false;
                 }}"""
