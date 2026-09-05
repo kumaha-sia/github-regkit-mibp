@@ -649,35 +649,46 @@ def _step3c_github_trusted_device(page, log, stop) -> None:
     raise_if_cancelled(stop)
     log("[*] GitHub Trusted Device (passkey) page detected")
     
-    # Wait for page to fully load
     try:
-        page.wait_for_load_state("networkidle", timeout=10_000)
+        page.wait_for_load_state("networkidle", timeout=5_000)
     except Exception:
         pass
         
     clicked = False
-    skip_texts = ["not now", "ask me later", "skip", "cancel", "no thanks"]
     
-    # Try using JS to find and click the skip button reliably
+    # Try native Playwright clicks first (trusted events, bypasses Turbo.js restrictions)
     try:
-        clicked = page.evaluate(
-            f"""() => {{
-                const els = [...document.querySelectorAll('button, a')];
-                const skip = els.find(e => 
-                    e.offsetParent !== null && 
-                    /not now|ask me later|skip|cancel|no thanks/i.test(e.textContent.trim())
-                );
-                if (skip) {{ skip.click(); return true; }}
-                return false;
-            }}"""
-        )
+        # Avoid just 'skip' as it matches GitHub's hidden 'Skip to content' accessibility link
+        dont_ask = page.locator("button, a, summary").filter(has_text=re.compile(r"Don't ask again for this browser|Ask me later|Not now|No thanks", re.IGNORECASE)).first
+        if dont_ask.count() > 0 and dont_ask.is_visible(timeout=1000):
+            dont_ask.click()
+            clicked = True
     except Exception as exc:
-        log(f"[i] Passkey skip JS eval failed: {exc}")
+        log(f"[i] Native click failed: {exc}")
+
+    if not clicked:
+        # Try using JS to find and click the skip button reliably as a last resort
+        try:
+            clicked = page.evaluate(
+                f"""() => {{
+                    const els = [...document.querySelectorAll('button, a, summary')];
+                    const skip = els.find(e => 
+                        e.offsetParent !== null && 
+                        /don't ask again|not now|ask me later|no thanks/i.test(e.textContent.trim())
+                    );
+                    if (skip) {{ skip.click(); return true; }}
+                    return false;
+                }}"""
+            )
+        except Exception as exc:
+            log(f"[i] Passkey skip JS eval failed: {exc}")
 
     if clicked:
         log("[*] Clicked skip button on trusted device page")
+        human_delay(3.0, 0.5, stop)
     else:
         log("[i] Could not find a skip button for passkey, waiting to see if it redirects automatically...")
+        human_delay(3.0, 0.5, stop)
         
     human_delay(3.0, 0.5, stop)
 
