@@ -69,6 +69,7 @@ class Config:
     # CodeBuddy registration
     codebuddy_enabled: bool = False
     codebuddy_region: str = ""  # blank = auto-detect from Current Region on the page
+    codebuddy_min_account_age_days: int = 2  # min GitHub account age (days) for Auto mode
     # scheduled jobs (cron-like)
     schedule_cron: str = ""          # cron expression, e.g. "0 9 * * *" = daily 9am
     schedule_count: int = 0          # accounts per scheduled run; 0 = disabled

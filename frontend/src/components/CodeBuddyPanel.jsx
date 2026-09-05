@@ -161,9 +161,14 @@ export default function CodeBuddyPanel() {
                 <span style={styles.formLabel}>Target Account</span>
                 <select value={accountId} onChange={(e) => setAccountId(e.target.value)} style={styles.input}>
                   <option value="" style={{ background: '#1e293b', color: '#f8fafc' }}>Auto (Pick next available)</option>
-                  {available.map((a) => (
-                    <option key={a.id} value={a.id} style={{ background: '#1e293b', color: '#f8fafc' }}>{a.email} ({a.username})</option>
-                  ))}
+                  {available.map((a) => {
+                    const ageDays = a.created_at ? Math.floor((Date.now() - new Date(a.created_at.replace(' ', 'T') + 'Z').getTime()) / 86400000) : 0
+                    return (
+                      <option key={a.id} value={a.id} style={{ background: '#1e293b', color: '#f8fafc' }}>
+                        {a.email} (Umur: {ageDays} hari)
+                      </option>
+                    )
+                  })}
                 </select>
               </label>
 

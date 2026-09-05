@@ -873,9 +873,12 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
         for i in range(count):
             if controller.should_stop():
                 break
-            account = _storage.get_next_for_codebuddy(account_id)
+            account = _storage.get_next_for_codebuddy(
+                account_id=account_id,
+                min_age_days=cfg.codebuddy_min_account_age_days,
+            )
             if account is None:
-                _log("[!] no more accounts available for CodeBuddy")
+                _log("[!] no more accounts available for CodeBuddy (or none meet the minimum age requirement)")
                 break
             with _cb_lock:
                 _cb_state["current_email"] = account.email
