@@ -12,6 +12,7 @@ export default function CodeBuddyPanel() {
   const [accountId, setAccountId] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [page, setPage] = useState(1)
   const timer = useRef(null)
 
   // poll status every 3s when running
@@ -86,6 +87,10 @@ export default function CodeBuddyPanel() {
   const successRate = activeCount + failedCount > 0 
     ? Math.round((activeCount / (activeCount + failedCount)) * 100) 
     : 0
+
+  const itemsPerPage = 8
+  const totalPages = Math.ceil(accounts.length / itemsPerPage)
+  const displayedAccounts = accounts.slice((page - 1) * itemsPerPage, page * itemsPerPage)
 
   return (
     <div style={styles.wrap}>
@@ -240,7 +245,7 @@ export default function CodeBuddyPanel() {
                     </tr>
                   </thead>
                   <tbody>
-                    {accounts.map((a) => (
+                    {displayedAccounts.map((a) => (
                       <tr key={a.id} style={a.status === 'failed' ? styles.trFailed : styles.tr}>
                         <td style={styles.td}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -266,6 +271,26 @@ export default function CodeBuddyPanel() {
                 </table>
               )}
             </div>
+            
+            {accounts.length > 0 && (
+              <div style={styles.pagination}>
+                <button 
+                  style={{ ...styles.pageBtn, opacity: page === 1 ? 0.5 : 1 }} 
+                  disabled={page === 1} 
+                  onClick={() => setPage(p => p - 1)}
+                >
+                  &larr; Prev
+                </button>
+                <span style={styles.pageText}>Page {page} of {totalPages || 1}</span>
+                <button 
+                  style={{ ...styles.pageBtn, opacity: page >= totalPages ? 0.5 : 1 }} 
+                  disabled={page >= totalPages} 
+                  onClick={() => setPage(p => p + 1)}
+                >
+                  Next &rarr;
+                </button>
+              </div>
+            )}
           </div>
 
         </div>
@@ -342,6 +367,10 @@ const styles = {
   monoBadge: { color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.2)', padding: '3px 6px', borderRadius: 6, fontSize: 11, border: '1px solid var(--border)' },
   codeCell: { fontSize: 11.5, color: 'var(--text-muted)', fontFamily: 'monospace', background: 'rgba(0,0,0,0.2)', padding: '4px 8px', borderRadius: 6 },
   
+  pagination: { padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderTop: '1px solid rgba(255,255,255,0.05)', background: 'rgba(0,0,0,0.1)' },
+  pageBtn: { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', padding: '6px 12px', borderRadius: 6, fontSize: 12, cursor: 'pointer', transition: 'background 0.2s' },
+  pageText: { fontSize: 12, color: 'var(--text-muted)', fontWeight: 500 },
+
   emptyState: { padding: 40, textAlign: 'center', color: 'var(--text-muted)', fontSize: 14 }
 }
 
