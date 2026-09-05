@@ -893,15 +893,31 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
 
             pm = ProxyManager(getattr(cfg, "proxy", ""), log=_log)
             proxy_health.init(_storage)
-            try:
-                opts = browser_ctx_options(cfg, pm, log=_log)
-                with Camoufox(**opts) as browser:
-                    context, page = context_and_page(browser)
-                    result: CodeBuddyResult = codebuddy_register(
-                        page, context, account, cfg, _log, controller.should_stop,
-                    )
-            except Exception as exc:
-                result = CodeBuddyResult(success=False, error=str(exc), step="browser")
+            infra_retries = 3
+            while infra_retries > 0:
+                if controller.should_stop():
+                    result = CodeBuddyResult(success=False, error="stopped", step="browser")
+                    break
+                try:
+                    opts = browser_ctx_options(cfg, pm, log=_log)
+                    with Camoufox(**opts) as browser:
+                        context, page = context_and_page(browser)
+                        result: CodeBuddyResult = codebuddy_register(
+                            page, context, account, cfg, _log, controller.should_stop,
+                        )
+                    break
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    if ("ip not found" in msg or "not in geoip database" in msg or
+                        "ipv6 exit ip" in msg or "proxy connection" in msg or "wrong_version" in msg or "ssl" in msg):
+                        infra_retries -= 1
+                        if infra_retries > 0:
+                            _log(f"[!] infra error ({exc}) — rotating proxy and retrying ({infra_retries} left)")
+                            pm.rotate()
+                            _sleep_with_cancel_cb(3, controller.should_stop)
+                            continue
+                    result = CodeBuddyResult(success=False, error=str(exc), step="browser")
+                    break
 
             if result.success:
                 _storage.add_codebuddy_account(
@@ -911,8 +927,11 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
                 _log(f"[+] CodeBuddy registered: {account.email} (region={result.region})")
             else:
                 fail += 1
-                is_proxy_err = result.step == "browser" and "proxy" in (result.error or "").lower()
-                if account.id is not None and not is_proxy_err:
+                err_lower = (result.error or "").lower()
+                is_infra_err = result.step == "browser" and (
+                    "proxy" in err_lower or "ip not found" in err_lower
+                )
+                if account.id is not None and not is_infra_err:
                     _storage.add_codebuddy_account(
                         account.id, 0, "", status="failed"
                     )
