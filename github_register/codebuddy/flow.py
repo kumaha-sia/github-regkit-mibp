@@ -106,6 +106,8 @@ def detect_page(page) -> str:
             return "account_suspended"
         if "/sessions/verified-device" in check_url:
             return "verified_device"
+        if "/sessions/trusted-device" in check_url:
+            return "trusted_device"
         if "/sessions/two-factor" in check_url or "/2fa" in check_url:
             return "2fa"
         if "/login" in check_url and "oauth" not in check_url:
@@ -642,6 +644,43 @@ def _step3b_github_verified_device(page, account, cfg, log, stop) -> None:
     human_delay(3.0, 0.5, stop)
 
 
+def _step3c_github_trusted_device(page, log, stop) -> None:
+    """Handle the 'Add a passkey to your trusted device?' prompt by skipping it."""
+    raise_if_cancelled(stop)
+    log("[*] GitHub Trusted Device (passkey) page detected")
+    
+    # Wait for page to fully load
+    try:
+        page.wait_for_load_state("networkidle", timeout=10_000)
+    except Exception:
+        pass
+        
+    clicked = False
+    skip_texts = ["not now", "ask me later", "skip", "cancel", "no thanks"]
+    
+    # Try using JS to find and click the skip button reliably
+    try:
+        clicked = page.evaluate(
+            f"""() => {{
+                const els = [...document.querySelectorAll('button, a')];
+                const skip = els.find(e => 
+                    e.offsetParent !== null && 
+                    /not now|ask me later|skip|cancel|no thanks/i.test(e.textContent.trim())
+                );
+                if (skip) {{ skip.click(); return true; }}
+                return false;
+            }}"""
+        )
+    except Exception as exc:
+        log(f"[i] Passkey skip JS eval failed: {exc}")
+
+    if clicked:
+        log("[*] Clicked skip button on trusted device page")
+    else:
+        log("[i] Could not find a skip button for passkey, waiting to see if it redirects automatically...")
+        
+    human_delay(3.0, 0.5, stop)
+
 def _step4_github_authorize(page, log, stop) -> None:
     """Step 5: click Authorize on the OAuth consent page."""
     raise_if_cancelled(stop)
@@ -867,6 +906,12 @@ def codebuddy_register(
                 _step3b_github_verified_device(page, account, cfg, log, stop)
             except SignupError as exc:
                 return CodeBuddyResult(success=False, error=str(exc), step="verified_device")
+            continue
+        if state == "trusted_device":
+            try:
+                _step3c_github_trusted_device(page, log, stop)
+            except SignupError as exc:
+                return CodeBuddyResult(success=False, error=str(exc), step="trusted_device")
             continue
         if state == "authorize":
             try:
