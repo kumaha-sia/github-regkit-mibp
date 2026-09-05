@@ -1004,6 +1004,14 @@ async def api_codebuddy_available_accounts(x_access_key: Optional[str] = Header(
     return {"ok": True, "accounts": items, "total": len(items)}
 
 
+@app.delete("/api/codebuddy/accounts/{account_id}")
+async def api_codebuddy_retry_account(account_id: int, x_access_key: Optional[str] = Header(None)) -> Dict[str, Any]:
+    """Remove a CodeBuddy account tracking record (usually failed), allowing it to be retried."""
+    _require_auth(x_access_key)
+    deleted = _storage.delete_codebuddy_account(account_id)
+    return {"ok": deleted}
+
+
 if (DIST / "assets").is_dir():
     app.mount("/assets", StaticFiles(directory=str(DIST / "assets")), name="assets")
 

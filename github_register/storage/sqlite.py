@@ -461,6 +461,16 @@ class SqliteStorage:
             )
             return int(cur.lastrowid)
 
+    def delete_codebuddy_account(self, account_id: int) -> bool:
+        """Remove a record from codebuddy_accounts by its parent account_id."""
+        conn = self._conn()
+        with conn:
+            cur = conn.execute(
+                "DELETE FROM codebuddy_accounts WHERE account_id = ?",
+                (account_id,)
+            )
+            return cur.rowcount > 0
+
     def list_codebuddy_accounts(self) -> list[dict]:
         """List all CodeBuddy-registered accounts with GitHub details."""
         rows = self._conn().execute(

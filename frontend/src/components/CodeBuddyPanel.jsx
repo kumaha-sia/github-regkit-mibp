@@ -57,6 +57,42 @@ export default function CodeBuddyPanel() {
     } catch { /* ignore */ }
   }
 
+  async function handleRetry(acctId) {
+    if (!window.confirm("Retry this account? It will be moved back to the available queue for auto-provisioning.")) return;
+    try {
+      setBusy(true)
+      await api.del(`/api/codebuddy/accounts/${acctId}`)
+      await Promise.all([loadAccounts(), loadAvailable()])
+      setMsg('Account returned to available queue.')
+      setTimeout(() => setMsg(''), 3000)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleRetryAllFailed() {
+    const failedAccounts = accounts.filter(a => a.status === 'failed');
+    if (failedAccounts.length === 0) return;
+    if (!window.confirm(`Retry all ${failedAccounts.length} failed accounts? They will be moved back to the available queue.`)) return;
+    try {
+      setBusy(true)
+      let count = 0;
+      for (const a of failedAccounts) {
+        await api.del(`/api/codebuddy/accounts/${a.account_id}`);
+        count++;
+      }
+      await Promise.all([loadAccounts(), loadAvailable()])
+      setMsg(`Returned ${count} accounts to available queue.`)
+      setTimeout(() => setMsg(''), 4000)
+    } catch (err) {
+      setMsg(`Error: ${err.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function startJob() {
     setBusy(true); setMsg('')
     try {
@@ -226,6 +262,30 @@ export default function CodeBuddyPanel() {
               <div style={styles.metricValWrap}>
                 <span style={styles.metricVal}>{failedCount}</span>
                 {failedCount > 0 && <span style={styles.metricSubDanger}>Needs review</span>}
+                {failedCount > 0 && (
+                  <button 
+                    onClick={handleRetryAllFailed} 
+                    disabled={busy}
+                    style={{
+                      marginLeft: 'auto', 
+                      background: 'rgba(252,165,165,0.15)',
+                      border: '1px solid rgba(252,165,165,0.3)',
+                      color: '#FCA5A5',
+                      borderRadius: 4,
+                      cursor: busy ? 'default' : 'pointer',
+                      padding: '2px 8px',
+                      fontSize: 11,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      opacity: busy ? 0.5 : 1
+                    }}
+                    title="Retry all failed accounts"
+                  >
+                    <RefreshCw size={10} />
+                    Retry All
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -265,10 +325,33 @@ export default function CodeBuddyPanel() {
                           {a.connection_id ? <code style={styles.codeCell}>{a.connection_id}</code> : <span style={{color:'var(--text-muted)'}}>—</span>}
                         </td>
                         <td style={styles.td}>
-                          <Badge tone={a.status === 'active' ? 'success' : 'danger'}>
-                            {a.status === 'active' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                            {' '}{a.status}
-                          </Badge>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <Badge tone={a.status === 'active' ? 'success' : 'danger'}>
+                              {a.status === 'active' ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
+                              {' '}{a.status}
+                            </Badge>
+                            {a.status === 'failed' && (
+                              <button
+                                onClick={() => handleRetry(a.account_id)}
+                                disabled={busy}
+                                style={{
+                                  background: 'rgba(252,165,165,0.1)',
+                                  border: '1px solid rgba(252,165,165,0.3)',
+                                  color: '#FCA5A5',
+                                  borderRadius: 4,
+                                  cursor: busy ? 'default' : 'pointer',
+                                  padding: '2px 6px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  opacity: busy ? 0.5 : 1
+                                }}
+                                title="Retry (move back to available queue)"
+                              >
+                                <RefreshCw size={12} />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     ))}
