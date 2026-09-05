@@ -447,15 +447,15 @@ class SqliteStorage:
         return [dict(r) for r in rows]
 
     def add_codebuddy_account(
-        self, account_id: int, connection_id: int, region: str = ""
+        self, account_id: int, connection_id: int, region: str = "", status: str = "active"
     ) -> int:
         conn = self._conn()
         with conn:
             cur = conn.execute(
                 "INSERT INTO codebuddy_accounts "
                 "(account_id, connection_id, region, status, created_at)"
-                " VALUES (?, ?, ?, 'active', ?)",
-                (account_id, connection_id, region, _now()),
+                " VALUES (?, ?, ?, ?, ?)",
+                (account_id, connection_id, region, status, _now()),
             )
             return int(cur.lastrowid)
 

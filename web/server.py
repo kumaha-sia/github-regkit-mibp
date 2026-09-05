@@ -908,6 +908,10 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
                 _log(f"[+] CodeBuddy registered: {account.email} (region={result.region})")
             else:
                 fail += 1
+                if account.id is not None:
+                    _storage.add_codebuddy_account(
+                        account.id, 0, "", status="failed"
+                    )
                 _log(f"[-] CodeBuddy failed for {account.email}: {result.error} (step={result.step})")
 
             with _cb_lock:

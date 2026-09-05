@@ -104,6 +104,8 @@ def detect_page(page) -> str:
     if "github.com" in check_url:
         if "/suspended" in check_url:
             return "account_suspended"
+        if "/sessions/verified-device" in check_url:
+            return "verified_device"
         if "/sessions/two-factor" in check_url or "/2fa" in check_url:
             return "2fa"
         if "/login" in check_url and "oauth" not in check_url:
@@ -569,6 +571,77 @@ def _step3_github_2fa(page, account, log, stop) -> None:
     raise SignupError("2FA verification failed after 3 attempts")
 
 
+def _step3b_github_verified_device(page, account, cfg, log, stop) -> None:
+    """Step 4b: Handle Email OTP (Device Verification)."""
+    raise_if_cancelled(stop)
+    log("[*] GitHub Device Verification page detected (OTP via email)")
+    
+    # Determine the correct mail provider based on the account's email domain
+    domain = account.email.split("@")[-1]
+    tempik_domains = [d.strip() for d in getattr(cfg, "tempik_domains", "webkarya.net").split(",") if d.strip()]
+    
+    if domain in tempik_domains:
+        from ..tempik import TempikClient
+        mail = TempikClient(
+            api_base=getattr(cfg, "tempik_api_base", "https://tempik.webkarya.net/api"),
+            domains=getattr(cfg, "tempik_domains", "webkarya.net"),
+        )
+    else:
+        from ..litensi import LitensiClient
+        mail = LitensiClient(cfg.litensi_api_id, cfg.litensi_api_key, cfg.litensi_site, cfg.litensi_zone)
+
+    order_id = ""
+    # For litensi we need an order id. Reordering gives us a fresh window for the same email.
+    if hasattr(mail, "reorder"):
+        try:
+            log(f"[*] Re-ordering mailbox {account.email} for device verification")
+            data = mail.reorder(account.email)
+            order_id = str(data.get("order_id") or "")
+        except Exception as exc:
+            log(f"[!] mailbox reorder failed: {exc}")
+
+        if not order_id:
+            raise SignupError(
+                "Tidak dapat mengambil OTP. Litensi menolak reorder untuk email ini "
+                "(mungkin email sudah kedaluwarsa). Gunakan fitur Single Session Merging "
+                "atau pastikan mendaftar menggunakan TOTP (2FA) di lain waktu."
+            )
+
+    log("[*] waiting for GitHub device verification code...")
+    try:
+        code = mail.wait_for_code(
+            order_id,
+            email=account.email,
+            timeout=cfg.otp_timeout_sec,
+            log=log,
+            cancel_cb=stop,
+        )
+    except Exception as exc:
+        raise SignupError(f"failed to get device verification code: {exc}")
+
+    log(f"[*] verification code received: {code}")
+
+    # Fill and submit code
+    try:
+        otp_input = first(page, TWOFA_INPUTS, visible=True)
+        otp_input.fill(code, timeout=5_000)
+        human_delay(0.5, 0.2, stop)
+        verify_btn = first(page, TWOFA_VERIFY_BUTTON, visible=True)
+        human_click(page, verify_btn)
+        log("[*] Device Verify clicked")
+    except Exception as exc:
+        log(f"[i] Verify fill/click failed ({exc}); trying DOM fallback")
+        page.evaluate(
+            f"""() => {{
+                const inp = document.querySelector("input[name='otp'], input[autocomplete='one-time-code']");
+                if (inp) {{ inp.value = '{code}'; inp.dispatchEvent(new Event('input', {{bubbles: true}})); }}
+                const btn = document.querySelector("button[type='submit']");
+                if (btn) btn.click();
+            }}"""
+        )
+    human_delay(3.0, 0.5, stop)
+
+
 def _step4_github_authorize(page, log, stop) -> None:
     """Step 5: click Authorize on the OAuth consent page."""
     raise_if_cancelled(stop)
@@ -788,6 +861,12 @@ def codebuddy_register(
                 _step3_github_2fa(page, account, log, stop)
             except SignupError as exc:
                 return CodeBuddyResult(success=False, error=str(exc), step="2fa")
+            continue
+        if state == "verified_device":
+            try:
+                _step3b_github_verified_device(page, account, cfg, log, stop)
+            except SignupError as exc:
+                return CodeBuddyResult(success=False, error=str(exc), step="verified_device")
             continue
         if state == "authorize":
             try:
