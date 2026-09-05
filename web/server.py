@@ -893,8 +893,8 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
 
             pm = ProxyManager(getattr(cfg, "proxy", ""), log=_log)
             proxy_health.init(_storage)
-            opts = browser_ctx_options(cfg, pm, log=_log)
             try:
+                opts = browser_ctx_options(cfg, pm, log=_log)
                 with Camoufox(**opts) as browser:
                     context, page = context_and_page(browser)
                     result: CodeBuddyResult = codebuddy_register(
@@ -911,10 +911,13 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
                 _log(f"[+] CodeBuddy registered: {account.email} (region={result.region})")
             else:
                 fail += 1
-                if account.id is not None:
+                is_proxy_err = result.step == "browser" and "proxy" in (result.error or "").lower()
+                if account.id is not None and not is_proxy_err:
                     _storage.add_codebuddy_account(
                         account.id, 0, "", status="failed"
                     )
+                else:
+                    _log(f"[i] {account.email} not marked as failed because error is infrastructural (will retry)")
                 _log(f"[-] CodeBuddy failed for {account.email}: {result.error} (step={result.step})")
 
             with _cb_lock:
