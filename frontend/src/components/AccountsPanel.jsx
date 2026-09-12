@@ -327,6 +327,7 @@ export default function AccountsPanel() {
               { key: 'has2fa', label: '2FA' },
               { key: 'no2fa', label: 'No 2FA' },
               { key: 'recovery', label: 'Recovery' },
+              { key: 'suspended', label: 'Banned' },
             ].map(f => (
               <button key={f.key} className={`acc-filter-chip${filter === f.key ? ' active' : ''}`}
                 onClick={() => setFilter(f.key)}>{f.label}</button>
@@ -411,9 +412,15 @@ export default function AccountsPanel() {
                       <span className="acc-td acc-td-email" title={r.email}>{truncate(r.email, 28)}</span>
                       <span className="acc-td acc-td-user" title={r.username}>{truncate(r.username, 16)}</span>
                       <span className="acc-td acc-td-status">
-                        {r.totp && <span className="acc-badge acc-badge-2fa">2FA</span>}
-                        {r.has_recovery && <span className="acc-badge acc-badge-recovery">Reco</span>}
-                        {!r.totp && !r.has_recovery && <span className="acc-badge acc-badge-none">&mdash;</span>}
+                        {r.status === 'suspended' ? (
+                          <span className="acc-badge acc-badge-suspended">BANNED</span>
+                        ) : (
+                          <>
+                            {r.totp && <span className="acc-badge acc-badge-2fa">2FA</span>}
+                            {r.has_recovery && <span className="acc-badge acc-badge-recovery">Reco</span>}
+                            {!r.totp && !r.has_recovery && <span className="acc-badge acc-badge-none">&mdash;</span>}
+                          </>
+                        )}
                       </span>
                       {!fileFilter && (
                         <span className="acc-td acc-td-file" title={r.file}>
@@ -753,6 +760,7 @@ const accountsCSS = `
 .acc-badge-2fa { color:#34D399; background:rgba(52,211,153,0.12); border:1px solid rgba(52,211,153,0.25); }
 .acc-badge-recovery { color:#60A5FA; background:rgba(96,165,250,0.12); border:1px solid rgba(96,165,250,0.25); }
 .acc-badge-none { color:var(--text-muted); background:var(--bg-card-hover); border:1px solid var(--border); }
+.acc-badge-suspended { color:#F87171; background:rgba(248,113,113,0.12); border:1px solid rgba(248,113,113,0.25); }
 
 /* ===== Checkbox ===== */
 .acc-check-btn {

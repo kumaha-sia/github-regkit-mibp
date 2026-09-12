@@ -210,6 +210,8 @@ class SqliteStorage:
             where.append("totp_secret = ''")
         elif filter == "recovery":
             where.append("recovery_codes != ''")
+        elif filter == "suspended":
+            where.append("status = 'suspended'")
         clause = (" WHERE " + " AND ".join(where)) if where else ""
 
         conn = self._conn()
@@ -256,6 +258,8 @@ class SqliteStorage:
             cond = " WHERE totp_secret = ''"
         elif filter == "recovery":
             cond = " WHERE recovery_codes != ''"
+        elif filter == "suspended":
+            cond = " WHERE status = 'suspended'"
         return int(self._conn().execute("SELECT COUNT(*) FROM accounts" + cond).fetchone()[0])
 
     def daily_counts(self, days: int = 30) -> dict:

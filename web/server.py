@@ -935,6 +935,9 @@ def _run_codebuddy_job(count: int, region: str, account_id: Optional[int] = None
                     _storage.add_codebuddy_account(
                         account.id, 0, "", status="failed"
                     )
+                    if "suspended" in err_lower or "banned" in err_lower:
+                        _storage.update_status(account.email, "suspended")
+                        _log(f"[!] Marked primary account {account.email} as suspended in database")
                 else:
                     _log(f"[i] {account.email} not marked as failed because error is infrastructural (will retry)")
                 _log(f"[-] CodeBuddy failed for {account.email}: {result.error} (step={result.step})")
